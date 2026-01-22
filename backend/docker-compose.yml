@@ -1,0 +1,70 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: erao-api
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=erao;Username=postgres;Password=${POSTGRES_PASSWORD:-postgres}
+      - Jwt__SecretKey=${JWT_SECRET_KEY:-YourSuperSecretKeyThatIsAtLeast32CharactersLong}
+      - Jwt__Issuer=Erao
+      - Jwt__Audience=Erao
+      - Encryption__Key=${ENCRYPTION_KEY:-MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=}
+      - Encryption__IV=${ENCRYPTION_IV:-MTIzNDU2Nzg5MDEyMzQ1Ng==}
+      - Ollama__BaseUrl=http://ollama:11434
+      - Ollama__Model=qwen3-coder:480b-cloud
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - erao-network
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: erao-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=erao
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - erao-network
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: erao-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - erao-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  postgres-data:
+  ollama-data:
+
+networks:
+  erao-network:
+    driver: bridge

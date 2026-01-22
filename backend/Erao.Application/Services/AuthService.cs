@@ -1,0 +1,263 @@
+using AutoMapper;
+using Erao.Core.DTOs;
+using Erao.Core.DTOs.Auth;
+using Erao.Core.Entities;
+using Erao.Core.Enums;
+using Erao.Core.Interfaces;
+using Microsoft.Extensions.Configuration;
+
+namespace Erao.Application.Services;
+
+public interface IAuthService
+{
+    Task<AuthResponse> RegisterAsync(RegisterRequest request);
+    Task<AuthResponse> LoginAsync(LoginRequest request);
+    Task<AuthResponse> RefreshTokenAsync(string refreshToken);
+    Task LogoutAsync(Guid userId);
+    Task ForgotPasswordAsync(ForgotPasswordRequest request);
+    Task<bool> VerifyOtpAsync(VerifyOtpRequest request);
+    Task ResetPasswordAsync(ResetPasswordRequest request);
+    Task ResendOtpAsync(string email);
+}
+
+public class AuthService : IAuthService
+{
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly ITokenService _tokenService;
+    private readonly IEmailService _emailService;
+    private readonly IMapper _mapper;
+    private readonly int _refreshTokenExpirationDays;
+    private const int OtpExpirationMinutes = 15;
+
+    public AuthService(
+        IUnitOfWork unitOfWork,
+        ITokenService tokenService,
+        IEmailService emailService,
+        IMapper mapper,
+        IConfiguration configuration)
+    {
+        _unitOfWork = unitOfWork;
+        _tokenService = tokenService;
+        _emailService = emailService;
+        _mapper = mapper;
+        _refreshTokenExpirationDays = int.Parse(configuration["Jwt:RefreshTokenExpirationDays"] ?? "7");
+    }
+
+    public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
+    {
+        if (await _unitOfWork.Users.EmailExistsAsync(request.Email))
+        {
+            throw new InvalidOperationException("Email already registered");
+        }
+
+        var user = new User
+        {
+            Email = request.Email.ToLower(),
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            FirstName = request.FirstName,
+            LastName = request.LastName,
+            SubscriptionTier = SubscriptionTier.Starter,
+            QueryLimitPerMonth = GetQueryLimitForTier(SubscriptionTier.Starter),
+            BillingCycleReset = DateTime.UtcNow.AddMonths(1)
+        };
+
+        user.RefreshToken = _tokenService.GenerateRefreshToken();
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(_refreshTokenExpirationDays);
+
+        await _unitOfWork.Users.AddAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        var accessToken = _tokenService.GenerateAccessToken(user);
+
+        return new AuthResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = user.RefreshToken,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15),
+            User = _mapper.Map<UserDto>(user)
+        };
+    }
+
+    public async Task<AuthResponse> LoginAsync(LoginRequest request)
+    {
+        var user = await _unitOfWork.Users.GetByEmailAsync(request.Email);
+
+        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        {
+            throw new UnauthorizedAccessException("Invalid email or password");
+        }
+
+        user.RefreshToken = _tokenService.GenerateRefreshToken();
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(_refreshTokenExpirationDays);
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        var accessToken = _tokenService.GenerateAccessToken(user);
+
+        return new AuthResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = user.RefreshToken,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15),
+            User = _mapper.Map<UserDto>(user)
+        };
+    }
+
+    public async Task<AuthResponse> RefreshTokenAsync(string refreshToken)
+    {
+        var user = await _unitOfWork.Users.GetByRefreshTokenAsync(refreshToken);
+
+        if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
+        {
+            throw new UnauthorizedAccessException("Invalid or expired refresh token");
+        }
+
+        user.RefreshToken = _tokenService.GenerateRefreshToken();
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(_refreshTokenExpirationDays);
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        var accessToken = _tokenService.GenerateAccessToken(user);
+
+        return new AuthResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = user.RefreshToken,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15),
+            User = _mapper.Map<UserDto>(user)
+        };
+    }
+
+    public async Task LogoutAsync(Guid userId)
+    {
+        var user = await _unitOfWork.Users.GetByIdAsync(userId);
+
+        if (user != null)
+        {
+            user.RefreshToken = null;
+            user.RefreshTokenExpiryTime = null;
+            await _unitOfWork.Users.UpdateAsync(user);
+            await _unitOfWork.SaveChangesAsync();
+        }
+    }
+
+    public async Task ForgotPasswordAsync(ForgotPasswordRequest request)
+    {
+        var user = await _unitOfWork.Users.GetByEmailAsync(request.Email);
+
+        // Always return success to prevent email enumeration attacks
+        if (user == null)
+        {
+            return;
+        }
+
+        // Generate 6-digit OTP
+        var otp = GenerateOtp();
+
+        user.PasswordResetOtp = otp;
+        user.PasswordResetOtpExpiry = DateTime.UtcNow.AddMinutes(OtpExpirationMinutes);
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        // Send OTP via email
+        await _emailService.SendPasswordResetOtpAsync(user.Email, otp);
+    }
+
+    public async Task<bool> VerifyOtpAsync(VerifyOtpRequest request)
+    {
+        var user = await _unitOfWork.Users.GetByEmailAsync(request.Email);
+
+        if (user == null)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(user.PasswordResetOtp) ||
+            user.PasswordResetOtpExpiry == null ||
+            user.PasswordResetOtpExpiry <= DateTime.UtcNow)
+        {
+            return false;
+        }
+
+        return user.PasswordResetOtp == request.Otp;
+    }
+
+    public async Task ResetPasswordAsync(ResetPasswordRequest request)
+    {
+        var user = await _unitOfWork.Users.GetByEmailAsync(request.Email);
+
+        if (user == null)
+        {
+            throw new InvalidOperationException("User not found");
+        }
+
+        if (string.IsNullOrEmpty(user.PasswordResetOtp) ||
+            user.PasswordResetOtpExpiry == null ||
+            user.PasswordResetOtpExpiry <= DateTime.UtcNow)
+        {
+            throw new InvalidOperationException("OTP has expired or is invalid");
+        }
+
+        if (user.PasswordResetOtp != request.Otp)
+        {
+            throw new InvalidOperationException("Invalid OTP");
+        }
+
+        // Update password
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+
+        // Clear OTP fields
+        user.PasswordResetOtp = null;
+        user.PasswordResetOtpExpiry = null;
+
+        // Invalidate refresh token to force re-login
+        user.RefreshToken = null;
+        user.RefreshTokenExpiryTime = null;
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+    }
+
+    public async Task ResendOtpAsync(string email)
+    {
+        var user = await _unitOfWork.Users.GetByEmailAsync(email);
+
+        // Always return success to prevent email enumeration attacks
+        if (user == null)
+        {
+            return;
+        }
+
+        // Generate new 6-digit OTP
+        var otp = GenerateOtp();
+
+        user.PasswordResetOtp = otp;
+        user.PasswordResetOtpExpiry = DateTime.UtcNow.AddMinutes(OtpExpirationMinutes);
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        // Send OTP via email
+        await _emailService.SendPasswordResetOtpAsync(user.Email, otp);
+    }
+
+    private static string GenerateOtp()
+    {
+        var random = new Random();
+        return random.Next(100000, 999999).ToString();
+    }
+
+    private static int GetQueryLimitForTier(SubscriptionTier tier)
+    {
+        return tier switch
+        {
+            SubscriptionTier.Starter => 100,
+            SubscriptionTier.Professional => 1000,
+            SubscriptionTier.Enterprise => 10000,
+            _ => 100
+        };
+    }
+}
