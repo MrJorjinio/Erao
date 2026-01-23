@@ -64,6 +64,14 @@ public class ChatService : IChatService
             throw new InvalidOperationException("Conversation not found");
         }
 
+        // Auto-generate conversation title from first message if empty (check before adding new message)
+        var isFirstMessage = string.IsNullOrEmpty(conversation.Title) || conversation.Title == "New Chat";
+        if (isFirstMessage && (conversation.Messages == null || conversation.Messages.Count == 0))
+        {
+            conversation.Title = GenerateTitle(request.Message);
+            await _unitOfWork.Conversations.UpdateAsync(conversation);
+        }
+
         // Save user message
         var userMessage = new Message
         {
@@ -101,17 +109,60 @@ public class ChatService : IChatService
             }
         }
 
-        // Build chat history
-        var history = conversation.Messages
+        // Build chat history from previous messages - include query results for context
+        var history = (conversation.Messages ?? Enumerable.Empty<Message>())
             .OrderBy(m => m.CreatedAt)
-            .Select(m => (m.Role == MessageRole.User ? "user" : "assistant", m.Content))
+            .Select(m => {
+                var role = m.Role == MessageRole.User ? "user" : "assistant";
+                var content = m.Content;
+
+                // For assistant messages, append query results as natural language context
+                if (m.Role == MessageRole.Assistant && !string.IsNullOrEmpty(m.QueryResult))
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(m.QueryResult);
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("rows", out var rows) && rows.GetArrayLength() > 0)
+                        {
+                            var rowCount = rows.GetArrayLength();
+                            if (rowCount == 1)
+                            {
+                                // Single row - format as "The result was: Column1=Value1, Column2=Value2"
+                                var row = rows[0];
+                                var values = new List<string>();
+                                foreach (var prop in row.EnumerateObject())
+                                {
+                                    values.Add($"{prop.Name}: {prop.Value}");
+                                }
+                                content += $"\n\n(Query returned: {string.Join(", ", values)})";
+                            }
+                            else
+                            {
+                                // Multiple rows - just note the count
+                                content += $"\n\n(Query returned {rowCount} rows of data)";
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // If JSON parsing fails, skip adding result context
+                    }
+                }
+
+                return (role, content);
+            })
             .ToList();
 
         // Build system prompt
         var systemPrompt = BuildSystemPrompt(schemaContext);
 
-        // Get AI response
+        // Get AI response with full conversation history
         var (aiResponse, tokensUsed) = await _ollamaService.ChatAsync(request.Message, history, systemPrompt);
+
+        // Log the AI response for debugging
+        Console.WriteLine($"[DEBUG] AI Response length: {aiResponse.Length}");
+        Console.WriteLine($"[DEBUG] AI Response: {aiResponse}");
 
         // Try to extract SQL from response
         string? sqlQuery = null;
@@ -120,6 +171,7 @@ public class ChatService : IChatService
         if (dbConnection != null && request.ExecuteQuery)
         {
             sqlQuery = ExtractSqlFromResponse(aiResponse);
+            Console.WriteLine($"[DEBUG] Extracted SQL: {sqlQuery ?? "NULL"}");
 
             if (!string.IsNullOrEmpty(sqlQuery))
             {
@@ -184,39 +236,49 @@ public class ChatService : IChatService
     {
         var prompt = @"You are Erao, an AI-powered database assistant. Your ONLY role is to help users query and understand their databases using natural language.
 
+CRITICAL - USE CONVERSATION CONTEXT:
+- ALWAYS remember and reference previous messages in this conversation
+- If user asks a follow-up question like 'show me more details' or 'what about their sales?', understand they're referring to the previous topic
+- Use pronouns correctly: 'them', 'it', 'those' refer to entities from previous messages
+- Example: If user asked about 'best employee' and then asks 'what are their sales?', query sales for that same employee
+
 IMPORTANT - Stay focused on databases ONLY:
 - You MUST ONLY answer questions related to databases, SQL queries, data analysis, and the connected database schema
-- If a user asks ANYTHING unrelated to databases (sports, celebrities, general knowledge, opinions, coding help, weather, news, etc.), politely decline
-- For off-topic questions, respond with something like: 'I'm Erao, your database assistant! I can only help with database queries and data analysis. Try asking me something about your data, like ""How many customers do I have?"" or ""Show me top selling products.""'
-- NEVER engage with off-topic conversations, debates, or general questions - always redirect to database topics
-- Even if the user insists, stay focused on your database assistant role
+- If a user asks ANYTHING unrelated to databases, politely decline and redirect to database topics
 
-When a user asks a data question:
-1. Generate the SQL query wrapped in ```sql ... ``` blocks (this will be executed automatically and results shown to user)
-2. Provide a friendly, conversational response with context about the results
-3. Do NOT explain the SQL syntax or show the query to the user - they just want the answer
-4. If you can't generate a query, explain why in simple terms
+CRITICAL - SQL FORMAT REQUIREMENT:
+You MUST format SQL queries EXACTLY like this (this is mandatory):
 
-Response style:
-- Start with a friendly intro like 'Here's what I found:', 'Based on your data:', 'I found the following:', etc.
-- Be conversational and helpful
-- Add brief insights or context about the results when relevant
-- Example: 'Here's your oldest employee! Margaret Peacock has been with the company since 1937 and had her busiest day on February 26, 1998.'
-- If results show something interesting, mention it briefly
+```sql
+SELECT COUNT(*) AS ""Total"" FROM tablename
+```
 
-SQL Query rules (CRITICAL):
+- Start with triple backtick + sql
+- Then your SQL query
+- End with triple backtick
+- Without this EXACT format, the query will NOT run
+- NEVER use placeholders - query the real data directly
+- NEVER ask user for IDs - just execute the query
+
+CRITICAL - Column naming:
+- Use double quotes for aliases: COUNT(*) AS ""Total Count""
+
+IMPORTANT - QUERY RESULTS:
+- Results display automatically - just provide the SQL query
+- Do not state specific numbers - let the result card show them
+
+CRITICAL - TABLE NAME CASE SENSITIVITY:
+- PostgreSQL is case-sensitive for table and column names
+- You MUST use the EXACT table names as shown in the schema (with proper PascalCase)
+- ALWAYS wrap table names in double quotes to preserve case: FROM ""Posts"" not FROM posts
+- Example: SELECT COUNT(*) FROM ""Videos"" (not FROM videos)
+- Example: SELECT * FROM ""Comments"" WHERE ""PostId"" = 1
+
+SQL Query rules:
 - ALWAYS use DISTINCT when there's any possibility of duplicate rows from JOINs
-- ALWAYS use column aliases to make results user-friendly:
-  * Use 'AS FirstName' instead of showing 'first_name'
-  * Use 'AS LastName' instead of showing 'last_name'
-  * Use 'AS BirthDate' instead of showing 'birth_date'
-  * Use 'AS TotalOrders' instead of showing 'count(*)'
-  * Make all column names readable without underscores
-- Use proper aggregation (GROUP BY) to avoid duplicates when counting or summarizing
-- When finding 'the one' of something (oldest, newest, best), ensure only ONE row is returned using LIMIT 1 or proper subqueries
+- Use proper aggregation (GROUP BY) to avoid duplicates
+- When finding 'the one' of something, use LIMIT 1
 - Only generate SELECT queries unless explicitly asked for modifications
-- Use proper SQL syntax for the database type
-- Include appropriate JOINs when relationships exist
 - Never generate DROP, DELETE, or UPDATE statements unless explicitly requested
 ";
 
@@ -227,7 +289,7 @@ SQL Query rules (CRITICAL):
 The user's database has the following schema:
 {schemaContext}
 
-Use this schema to understand the database structure and generate accurate queries.";
+IMPORTANT: Use this schema to understand the database structure. Use the EXACT table and column names as shown above, wrapped in double quotes to preserve case sensitivity.";
         }
         else
         {
@@ -280,5 +342,36 @@ No database schema is available. You can help with general SQL questions or ask 
         }
 
         return upperSql.StartsWith("SELECT") || upperSql.StartsWith("WITH");
+    }
+
+    private static string GenerateTitle(string message)
+    {
+        // Clean up the message and take first 50 characters
+        var cleaned = message.Trim();
+
+        // Remove common filler words at the start
+        var fillerPrefixes = new[] { "can you ", "please ", "i want to ", "show me ", "get me ", "find ", "what is ", "what are " };
+        foreach (var prefix in fillerPrefixes)
+        {
+            if (cleaned.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned.Substring(prefix.Length).TrimStart();
+                break;
+            }
+        }
+
+        // Capitalize first letter
+        if (cleaned.Length > 0)
+        {
+            cleaned = char.ToUpper(cleaned[0]) + cleaned.Substring(1);
+        }
+
+        // Truncate to 50 characters max
+        if (cleaned.Length > 50)
+        {
+            cleaned = cleaned.Substring(0, 47) + "...";
+        }
+
+        return string.IsNullOrEmpty(cleaned) ? "New Chat" : cleaned;
     }
 }

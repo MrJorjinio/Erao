@@ -11,10 +11,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [emailNotVerified, setEmailNotVerified] = useState(false);
+  const [resending, setResending] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setEmailNotVerified(false);
     setIsLoading(true);
 
     try {
@@ -27,7 +30,12 @@ export default function LoginPage() {
       }
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.message);
+        if (err.message.includes("not verified")) {
+          setEmailNotVerified(true);
+          setError("Your email is not verified. Please verify your email to continue.");
+        } else {
+          setError(err.message);
+        }
       } else {
         setError("Something went wrong. Please try again.");
       }
@@ -36,8 +44,31 @@ export default function LoginPage() {
     }
   };
 
+  const handleResendVerification = async () => {
+    setResending(true);
+    try {
+      await api.resendEmailVerification(email);
+      router.push(`/otp-verification?email=${encodeURIComponent(email)}&type=email-verification`);
+    } catch (err) {
+      setError("Failed to resend verification code");
+    } finally {
+      setResending(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4">
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4 relative">
+      {/* Back Button */}
+      <Link
+        href="/"
+        className="absolute top-6 left-6 flex items-center gap-2 text-sm text-gray-600 hover:text-black transition-colors"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        Back
+      </Link>
+
       <div className="w-full max-w-[400px] flex flex-col items-center gap-8">
         {/* Logo */}
         <Link href="/" className="font-bold text-2xl tracking-tight">
@@ -57,6 +88,15 @@ export default function LoginPage() {
           {error && (
             <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-[10px]">
               {error}
+              {emailNotVerified && (
+                <button
+                  onClick={handleResendVerification}
+                  disabled={resending}
+                  className="block mt-2 text-black font-semibold hover:underline disabled:opacity-50"
+                >
+                  {resending ? "Sending..." : "Resend verification code"}
+                </button>
+              )}
             </div>
           )}
 
@@ -73,7 +113,7 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Enter your email"
                 required
-                className="h-10 bg-[#f5f5f5] rounded-[10px] px-3 text-sm outline-none placeholder:text-gray-400"
+                className="h-10 bg-[#f5f5f5] rounded-[10px] px-3 text-sm outline-none placeholder:text-gray-400 hover:bg-[#efefef] focus:bg-white focus:ring-1 focus:ring-black focus:ring-offset-2 transition-all"
               />
             </div>
 
@@ -89,7 +129,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"
                 required
-                className="h-10 bg-[#f5f5f5] rounded-[10px] px-3 text-sm outline-none placeholder:text-gray-400"
+                className="h-10 bg-[#f5f5f5] rounded-[10px] px-3 text-sm outline-none placeholder:text-gray-400 hover:bg-[#efefef] focus:bg-white focus:ring-1 focus:ring-black focus:ring-offset-2 transition-all"
               />
             </div>
 
@@ -105,7 +145,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="h-11 bg-black text-white rounded-[10px] text-sm font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+              className="h-11 bg-black text-white rounded-[10px] text-sm font-medium hover:bg-[#333] active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-2"
             >
               {isLoading ? "Signing in..." : "Sign in"}
             </button>

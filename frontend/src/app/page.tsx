@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useState } from "react";
 
 const features = [
   {
@@ -67,8 +66,6 @@ const LogoIcon = ({ className = "w-12 h-5" }: { className?: string }) => (
 );
 
 export default function LandingPage() {
-  const [currentFeature, setCurrentFeature] = useState(0);
-
   return (
     <div className="min-h-screen bg-white">
       {/* Navigation */}
@@ -117,13 +114,13 @@ export default function LandingPage() {
         <div className="flex gap-2.5">
           <Link
             href="/register"
-            className="bg-black text-white px-4 h-[32px] rounded-full text-sm font-medium hover:bg-gray-800 transition-colors flex items-center"
+            className="bg-black text-white px-4 h-[32px] rounded-full text-sm font-medium hover:bg-[#333] active:scale-[0.98] transition-all flex items-center"
           >
             Start Free
           </Link>
           <a
             href="#pricing"
-            className="bg-[#f5f5f5] text-black px-4 h-[32px] rounded-full text-sm font-medium hover:bg-gray-200 transition-colors flex items-center"
+            className="bg-[#f5f5f5] text-black px-4 h-[32px] rounded-full text-sm font-medium hover:bg-[#ebebeb] active:scale-[0.98] transition-all flex items-center"
           >
             View Pricing
           </a>
@@ -157,41 +154,42 @@ export default function LandingPage() {
         </p>
       </section>
 
-      {/* Features Slideshow */}
+      {/* Features - Stacking Cards */}
       <section id="features" className="w-full max-w-[960px] mx-auto px-5 py-10">
-        <div className="bg-white h-[580px] flex flex-col items-center justify-between py-8">
-          <div className="flex flex-col items-center text-center max-w-[600px] px-4">
-            <div className="w-full h-[250px] mb-6 flex items-center justify-center overflow-hidden">
-              <Image
-                key={currentFeature}
-                src={features[currentFeature].image}
-                alt={features[currentFeature].title}
-                width={500}
-                height={250}
-                className="object-contain rounded-xl max-h-[250px] w-auto transition-opacity duration-300 ease-in-out animate-fadeIn"
-                unoptimized
-              />
+        <div className="relative">
+          {features.map((feature, index) => (
+            <div
+              key={index}
+              className="sticky top-20 mb-6 last:mb-0"
+              style={{ zIndex: index + 1 }}
+            >
+              <div
+                className="bg-[#f5f5f5] rounded-2xl p-6 md:p-8 shadow-sm"
+                style={{
+                  transform: `translateY(${index * 8}px)`,
+                }}
+              >
+                <div className="flex flex-col md:flex-row gap-6 items-center">
+                  <div className="w-full md:w-1/2 flex items-center justify-center">
+                    <Image
+                      src={feature.image}
+                      alt={feature.title}
+                      width={400}
+                      height={200}
+                      className="object-contain rounded-xl max-h-[200px] w-auto"
+                      unoptimized
+                    />
+                  </div>
+                  <div className="w-full md:w-1/2">
+                    <h3 className="text-xl font-semibold mb-3">{feature.title}</h3>
+                    <p className="text-gray-500 text-sm leading-relaxed">
+                      {feature.description}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="transition-opacity duration-300 ease-in-out h-[220px] overflow-hidden">
-              <h3 className="text-xl font-semibold mb-3">{features[currentFeature].title}</h3>
-              <p className="text-gray-500 text-sm leading-relaxed max-w-[450px]">
-                {features[currentFeature].description}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex gap-2 mt-6">
-            {features.map((_, index) => (
-              <button
-                key={index}
-                onClick={() => setCurrentFeature(index)}
-                className={`h-2.5 rounded-full transition-all duration-300 ${
-                  index === currentFeature ? "w-6 bg-black" : "w-2.5 bg-gray-300 hover:bg-gray-400"
-                }`}
-                aria-label={`Go to feature ${index + 1}`}
-              />
-            ))}
-          </div>
+          ))}
         </div>
       </section>
 
@@ -227,9 +225,9 @@ export default function LandingPage() {
               </div>
               <Link
                 href="/register"
-                className={`w-full h-10 rounded-lg text-center text-sm font-medium transition-colors flex items-center justify-center ${
+                className={`w-full h-10 rounded-lg text-center text-sm font-medium transition-all flex items-center justify-center active:scale-[0.98] ${
                   plan.popular
-                    ? "bg-black text-white hover:bg-gray-800"
+                    ? "bg-black text-white hover:bg-[#333]"
                     : "bg-black/[0.08] text-black hover:bg-black/[0.12]"
                 }`}
               >

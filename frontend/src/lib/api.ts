@@ -30,6 +30,12 @@ interface AuthResponse {
   user: User;
 }
 
+export interface RegisterResponse {
+  email: string;
+  message: string;
+  requiresEmailVerification: boolean;
+}
+
 interface RegisterPayload {
   email: string;
   password: string;
@@ -191,9 +197,9 @@ class ApiClient {
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`;
 
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...options.headers,
+      ...(options.headers as Record<string, string>),
     };
 
     // Add auth token if available
@@ -268,10 +274,24 @@ class ApiClient {
   }
 
   // ========== Auth endpoints ==========
-  async register(payload: RegisterPayload): Promise<ApiResponse<AuthResponse>> {
-    return this.request<AuthResponse>('/api/auth/register', {
+  async register(payload: RegisterPayload): Promise<ApiResponse<RegisterResponse>> {
+    return this.request<RegisterResponse>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+  }
+
+  async verifyEmail(payload: { email: string; otp: string }): Promise<ApiResponse<AuthResponse>> {
+    return this.request<AuthResponse>('/api/auth/verify-email', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async resendEmailVerification(email: string): Promise<ApiResponse<null>> {
+    return this.request<null>('/api/auth/resend-email-verification', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
     });
   }
 

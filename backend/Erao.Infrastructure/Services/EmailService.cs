@@ -67,6 +67,30 @@ public class EmailService : IEmailService
         await SendEmailAsync(email, subject, body);
     }
 
+    public async Task SendEmailVerificationOtpAsync(string email, string otp)
+    {
+        var subject = "Erao - Verify Your Email";
+        var body = $@"
+            <html>
+            <body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333;'>
+                <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
+                    <h2 style='color: #2563eb;'>Verify Your Email</h2>
+                    <p>Thank you for signing up for Erao! Please verify your email address to complete your registration.</p>
+                    <p>Your verification code is:</p>
+                    <div style='background-color: #f3f4f6; padding: 20px; text-align: center; border-radius: 8px; margin: 20px 0;'>
+                        <span style='font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1f2937;'>{otp}</span>
+                    </div>
+                    <p>This code will expire in <strong>15 minutes</strong>.</p>
+                    <p>If you didn't create an account with Erao, please ignore this email.</p>
+                    <hr style='border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;' />
+                    <p style='color: #6b7280; font-size: 12px;'>This is an automated message from Erao. Please do not reply to this email.</p>
+                </div>
+            </body>
+            </html>";
+
+        await SendEmailAsync(email, subject, body);
+    }
+
     private async Task SendEmailAsync(string toEmail, string subject, string htmlBody)
     {
         try

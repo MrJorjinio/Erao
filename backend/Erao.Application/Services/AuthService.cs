@@ -10,7 +10,7 @@ namespace Erao.Application.Services;
 
 public interface IAuthService
 {
-    Task<AuthResponse> RegisterAsync(RegisterRequest request);
+    Task<RegisterResponse> RegisterAsync(RegisterRequest request);
     Task<AuthResponse> LoginAsync(LoginRequest request);
     Task<AuthResponse> RefreshTokenAsync(string refreshToken);
     Task LogoutAsync(Guid userId);
@@ -18,6 +18,8 @@ public interface IAuthService
     Task<bool> VerifyOtpAsync(VerifyOtpRequest request);
     Task ResetPasswordAsync(ResetPasswordRequest request);
     Task ResendOtpAsync(string email);
+    Task<AuthResponse> VerifyEmailAsync(VerifyOtpRequest request);
+    Task ResendEmailVerificationOtpAsync(string email);
 }
 
 public class AuthService : IAuthService
@@ -43,12 +45,15 @@ public class AuthService : IAuthService
         _refreshTokenExpirationDays = int.Parse(configuration["Jwt:RefreshTokenExpirationDays"] ?? "7");
     }
 
-    public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
+    public async Task<RegisterResponse> RegisterAsync(RegisterRequest request)
     {
         if (await _unitOfWork.Users.EmailExistsAsync(request.Email))
         {
             throw new InvalidOperationException("Email already registered");
         }
+
+        // Generate 6-digit OTP for email verification
+        var otp = GenerateOtp();
 
         var user = new User
         {
@@ -58,23 +63,31 @@ public class AuthService : IAuthService
             LastName = request.LastName,
             SubscriptionTier = SubscriptionTier.Starter,
             QueryLimitPerMonth = GetQueryLimitForTier(SubscriptionTier.Starter),
-            BillingCycleReset = DateTime.UtcNow.AddMonths(1)
+            BillingCycleReset = DateTime.UtcNow.AddMonths(1),
+            IsEmailVerified = false,
+            EmailVerificationOtp = otp,
+            EmailVerificationOtpExpiry = DateTime.UtcNow.AddMinutes(OtpExpirationMinutes)
         };
-
-        user.RefreshToken = _tokenService.GenerateRefreshToken();
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(_refreshTokenExpirationDays);
 
         await _unitOfWork.Users.AddAsync(user);
         await _unitOfWork.SaveChangesAsync();
 
-        var accessToken = _tokenService.GenerateAccessToken(user);
-
-        return new AuthResponse
+        // Send verification OTP via email (don't fail registration if email fails)
+        try
         {
-            AccessToken = accessToken,
-            RefreshToken = user.RefreshToken,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(15),
-            User = _mapper.Map<UserDto>(user)
+            await _emailService.SendEmailVerificationOtpAsync(user.Email, otp);
+        }
+        catch (Exception)
+        {
+            // Log OTP for development testing when email fails
+            Console.WriteLine($"[DEV] Email verification OTP for {user.Email}: {otp}");
+        }
+
+        return new RegisterResponse
+        {
+            Email = user.Email,
+            Message = "Registration successful. Please verify your email with the OTP sent to your inbox.",
+            RequiresEmailVerification = true
         };
     }
 
@@ -85,6 +98,11 @@ public class AuthService : IAuthService
         if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
         {
             throw new UnauthorizedAccessException("Invalid email or password");
+        }
+
+        if (!user.IsEmailVerified)
+        {
+            throw new InvalidOperationException("Email not verified. Please verify your email first.");
         }
 
         user.RefreshToken = _tokenService.GenerateRefreshToken();
@@ -242,6 +260,91 @@ public class AuthService : IAuthService
 
         // Send OTP via email
         await _emailService.SendPasswordResetOtpAsync(user.Email, otp);
+    }
+
+    public async Task<AuthResponse> VerifyEmailAsync(VerifyOtpRequest request)
+    {
+        var user = await _unitOfWork.Users.GetByEmailAsync(request.Email);
+
+        if (user == null)
+        {
+            throw new InvalidOperationException("User not found");
+        }
+
+        if (user.IsEmailVerified)
+        {
+            throw new InvalidOperationException("Email is already verified");
+        }
+
+        if (string.IsNullOrEmpty(user.EmailVerificationOtp) ||
+            user.EmailVerificationOtpExpiry == null ||
+            user.EmailVerificationOtpExpiry <= DateTime.UtcNow)
+        {
+            throw new InvalidOperationException("OTP has expired. Please request a new one.");
+        }
+
+        if (user.EmailVerificationOtp != request.Otp)
+        {
+            throw new InvalidOperationException("Invalid OTP");
+        }
+
+        // Mark email as verified
+        user.IsEmailVerified = true;
+        user.EmailVerificationOtp = null;
+        user.EmailVerificationOtpExpiry = null;
+
+        // Generate tokens for auto-login after verification
+        user.RefreshToken = _tokenService.GenerateRefreshToken();
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(_refreshTokenExpirationDays);
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        var accessToken = _tokenService.GenerateAccessToken(user);
+
+        return new AuthResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = user.RefreshToken,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15),
+            User = _mapper.Map<UserDto>(user)
+        };
+    }
+
+    public async Task ResendEmailVerificationOtpAsync(string email)
+    {
+        var user = await _unitOfWork.Users.GetByEmailAsync(email);
+
+        // Always return success to prevent email enumeration attacks
+        if (user == null)
+        {
+            return;
+        }
+
+        if (user.IsEmailVerified)
+        {
+            return;
+        }
+
+        // Generate new 6-digit OTP
+        var otp = GenerateOtp();
+
+        user.EmailVerificationOtp = otp;
+        user.EmailVerificationOtpExpiry = DateTime.UtcNow.AddMinutes(OtpExpirationMinutes);
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.SaveChangesAsync();
+
+        // Send OTP via email (don't fail if email fails)
+        try
+        {
+            await _emailService.SendEmailVerificationOtpAsync(user.Email, otp);
+        }
+        catch (Exception)
+        {
+            // Log OTP for development testing when email fails
+            Console.WriteLine($"[DEV] Email verification OTP for {user.Email}: {otp}");
+        }
     }
 
     private static string GenerateOtp()

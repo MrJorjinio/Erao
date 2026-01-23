@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, auth, ApiError } from "@/lib/api";
 
-export default function OtpVerificationPage() {
+function OtpVerificationContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get("email") || "";
+  const verificationType = searchParams.get("type") || "password-reset";
+
+  const isEmailVerification = verificationType === "email-verification";
 
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
@@ -19,9 +22,9 @@ export default function OtpVerificationPage() {
 
   useEffect(() => {
     if (!email) {
-      router.push("/forgot-password");
+      router.push(isEmailVerification ? "/register" : "/forgot-password");
     }
-  }, [email, router]);
+  }, [email, router, isEmailVerification]);
 
   const handleChange = (index: number, value: string) => {
     if (value.length > 1) {
@@ -77,18 +80,35 @@ export default function OtpVerificationPage() {
     setError("");
 
     try {
-      const response = await api.verifyOtp(email, otpValue);
-      if (response.success && response.data) {
-        setSuccess("OTP verified! Redirecting to reset password...");
-        // Navigate to reset password page with email and otp
-        router.push(
-          `/reset-password?email=${encodeURIComponent(email)}&otp=${otpValue}`
-        );
+      if (isEmailVerification) {
+        // Email verification flow - auto-login after verification
+        const response = await api.verifyEmail({ email, otp: otpValue });
+        if (response.success && response.data) {
+          auth.saveTokens(response.data.accessToken, response.data.refreshToken);
+          auth.saveUser(response.data.user);
+          setSuccess("Email verified! Redirecting...");
+          setTimeout(() => router.push("/ai"), 1000);
+        } else {
+          setError("Invalid or expired OTP");
+        }
+      } else {
+        // Password reset flow
+        const response = await api.verifyOtp(email, otpValue);
+        if (response.success && response.data) {
+          setSuccess("OTP verified! Redirecting to reset password...");
+          router.push(
+            `/reset-password?email=${encodeURIComponent(email)}&otp=${otpValue}`
+          );
+        } else {
+          setError("Invalid or expired OTP");
+        }
+      }
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message);
       } else {
         setError("Invalid or expired OTP");
       }
-    } catch (err) {
-      setError("Invalid or expired OTP");
       console.error(err);
     } finally {
       setLoading(false);
@@ -101,7 +121,11 @@ export default function OtpVerificationPage() {
     setSuccess("");
 
     try {
-      await api.resendOtp(email);
+      if (isEmailVerification) {
+        await api.resendEmailVerification(email);
+      } else {
+        await api.resendOtp(email);
+      }
       setSuccess("A new code has been sent to your email");
       setOtp(["", "", "", "", "", ""]);
       inputRefs.current[0]?.focus();
@@ -115,29 +139,36 @@ export default function OtpVerificationPage() {
 
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center">
-      <div className="w-full max-w-md px-6">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold mb-2">Erao.</h1>
-          <h2 className="text-xl font-semibold">Verify your email</h2>
-          <p className="text-gray-600 text-sm mt-2">
-            We&apos;ve sent a 6-digit code to your email. Enter it below to
-            reset your password.
+      <div className="w-full max-w-[400px] px-6 flex flex-col items-center gap-8">
+        {/* Logo */}
+        <Link href="/" className="font-bold text-xl tracking-tight">
+          Erao.
+        </Link>
+
+        {/* Header */}
+        <div className="w-full text-center flex flex-col gap-2">
+          <h1 className="text-base font-semibold">Verify your email</h1>
+          <p className="text-sm text-gray-500">
+            {isEmailVerification
+              ? "We've sent a 6-digit code to your email. Enter it below to complete your registration."
+              : "We've sent a 6-digit code to your email. Enter it below to reset your password."}
           </p>
         </div>
 
         {error && (
-          <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-sm mb-4 text-center">
+          <div className="w-full bg-red-50 text-red-600 px-4 py-2 rounded-[10px] text-sm text-center">
             {error}
           </div>
         )}
 
         {success && (
-          <div className="bg-green-50 text-green-600 px-4 py-2 rounded-lg text-sm mb-4 text-center">
+          <div className="w-full bg-green-50 text-green-600 px-4 py-2 rounded-[10px] text-sm text-center">
             {success}
           </div>
         )}
 
-        <form onSubmit={handleVerify} className="space-y-6">
+        <form onSubmit={handleVerify} className="w-full flex flex-col gap-6">
+          {/* OTP Input Boxes */}
           <div className="flex justify-center gap-3">
             {otp.map((digit, index) => (
               <input
@@ -152,42 +183,56 @@ export default function OtpVerificationPage() {
                 onChange={(e) => handleChange(index, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(index, e)}
                 onPaste={handlePaste}
-                className="w-12 h-14 text-center text-xl font-semibold bg-gray-100 rounded-lg outline-none focus:ring-2 focus:ring-black"
+                className="w-12 h-14 text-center text-lg font-semibold bg-[#f5f5f5] rounded-[10px] outline-none focus:ring-2 focus:ring-black"
               />
             ))}
           </div>
 
+          {/* Verify Button */}
           <button
             type="submit"
             disabled={loading || otp.some((d) => !d)}
-            className="w-full py-3 bg-black text-white font-medium rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full h-11 bg-black text-white text-sm font-medium rounded-[10px] hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? "Verifying..." : "Verify Code"}
           </button>
         </form>
 
-        <div className="text-center mt-6">
-          <p className="text-gray-600 text-sm">
-            Didn&apos;t receive the code?{" "}
-            <button
-              onClick={handleResend}
-              disabled={resending}
-              className="font-semibold text-black hover:underline disabled:opacity-50"
-            >
-              {resending ? "Sending..." : "Resend"}
-            </button>
-          </p>
+        {/* Resend Link */}
+        <div className="flex items-center gap-1 text-sm">
+          <span className="text-gray-500">Didn&apos;t receive the code?</span>
+          <button
+            onClick={handleResend}
+            disabled={resending}
+            className="font-semibold text-black hover:underline disabled:opacity-50"
+          >
+            {resending ? "Sending..." : "Resend"}
+          </button>
         </div>
 
-        <div className="text-center mt-4">
-          <Link
-            href="/login"
-            className="text-blue-600 text-sm font-medium hover:underline"
-          >
-            Back to login
-          </Link>
-        </div>
+        {/* Back to Login */}
+        <Link
+          href="/login"
+          className="text-black text-sm font-medium hover:underline"
+        >
+          Back to login
+        </Link>
       </div>
     </div>
+  );
+}
+
+export default function OtpVerificationPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center">
+        <div className="w-full max-w-[400px] px-6 flex flex-col items-center gap-8">
+          <span className="font-bold text-xl tracking-tight">Erao.</span>
+          <div className="text-sm text-gray-500">Loading...</div>
+        </div>
+      </div>
+    }>
+      <OtpVerificationContent />
+    </Suspense>
   );
 }

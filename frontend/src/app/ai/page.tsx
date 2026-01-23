@@ -13,13 +13,17 @@ import {
   CreateDatabaseConnectionPayload,
   QueryResult,
 } from "@/lib/api";
+import { DataChart, ChartType, detectChartType } from "@/components/DataChart";
 
-// Helper to strip SQL code blocks from AI response text
+// Helper to strip SQL code blocks and query result blocks from AI response text
 function stripSqlBlocks(content: string): string {
-  // Remove ```sql ... ``` blocks
   return content
     .replace(/```sql[\s\S]*?```/gi, "")
     .replace(/```SQL[\s\S]*?```/g, "")
+    .replace(/\[Query Result:[\s\S]*$/gi, "") // Remove [Query Result: to end of string
+    .replace(/[,{]?"?(columns|rows|rowCount|executionTimeMs)"?[\s\S]*$/gi, "") // Remove partial JSON results
+    .replace(/\{"columns":\[[\s\S]*$/gi, "") // Remove JSON starting with columns
+    .replace(/\n\|[^\n]*\|(\n\|[^\n]*\|)*/g, "") // Remove markdown tables
     .replace(/\n{3,}/g, "\n\n") // Clean up extra newlines
     .trim();
 }
@@ -40,6 +44,24 @@ function parseQueryResult(queryResult: QueryResult | string | null): QueryResult
   }
   if (typeof queryResult === "object" && Array.isArray(queryResult.rows)) {
     return queryResult;
+  }
+  return null;
+}
+
+// Helper to detect requested chart type from user message
+function detectRequestedChartType(message: string): ChartType | null {
+  const lowerMessage = message.toLowerCase();
+  if (lowerMessage.includes("bar chart") || lowerMessage.includes("bar graph")) {
+    return "bar";
+  }
+  if (lowerMessage.includes("line chart") || lowerMessage.includes("line graph")) {
+    return "line";
+  }
+  if (lowerMessage.includes("pie chart") || lowerMessage.includes("pie graph")) {
+    return "pie";
+  }
+  if (lowerMessage.includes("area chart") || lowerMessage.includes("area graph")) {
+    return "area";
   }
   return null;
 }
@@ -92,6 +114,13 @@ export default function AIPage() {
 
   // Account menu state
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+
+  // Search state
+  const [showSearchInput, setShowSearchInput] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Chart view state - tracks view mode per message
+  const [chartViews, setChartViews] = useState<Record<string, ChartType>>({});
 
   // Scroll to bottom of messages
   const scrollToBottom = () => {
@@ -278,6 +307,18 @@ export default function AIPage() {
             response.data.assistantMessage,
           ];
         });
+
+        // Check if user requested a specific chart type and auto-set it
+        const requestedChartType = detectRequestedChartType(messageContent);
+        if (requestedChartType && response.data.assistantMessage.queryResult) {
+          setChartViews((prev) => ({
+            ...prev,
+            [response.data.assistantMessage.id]: requestedChartType,
+          }));
+        }
+
+        // Refresh conversations to get updated title
+        loadConversations();
       }
     } catch (err) {
       // Remove optimistic message on error
@@ -323,20 +364,50 @@ export default function AIPage() {
       {/* Sidebar */}
       <aside className="w-[260px] bg-white flex flex-col justify-between border-r border-gray-100">
         {/* Top Section */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col">
           {/* Header */}
-          <div className="flex items-center justify-between px-4 pt-5 pb-4">
+          <div className="px-4 pt-5 pb-3">
             <span className="font-semibold text-base">Chats</span>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex flex-col gap-1 px-3 pb-3">
             <button
               onClick={createNewConversation}
-              className="w-7 h-7 bg-[#18181b] rounded-lg flex items-center justify-center hover:bg-gray-700 transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-[#f5f5f5] rounded-lg transition-colors"
             >
-              <span className="text-white text-xs font-semibold">+</span>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              New chat
+            </button>
+            <button
+              onClick={() => setShowSearchInput(!showSearchInput)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-[#f5f5f5] rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              Search chats
             </button>
           </div>
 
+          {/* Search Input */}
+          {showSearchInput && (
+            <div className="px-3 pb-3">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search conversations..."
+                className="w-full h-9 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none placeholder:text-gray-400"
+                autoFocus
+              />
+            </div>
+          )}
+
           {/* Chat List */}
-          <div className="flex flex-col gap-1 px-3 pb-3 overflow-y-auto max-h-[calc(100vh-220px)]">
+          <div className="flex flex-col gap-1 px-3 pb-3 overflow-y-auto max-h-[calc(100vh-280px)] custom-scrollbar">
             {loadingConversations ? (
               <div className="text-center py-4 text-sm text-gray-400">
                 Loading...
@@ -346,7 +417,13 @@ export default function AIPage() {
                 No conversations yet
               </div>
             ) : (
-              conversations.map((chat) => (
+              conversations
+                .filter((chat) =>
+                  searchQuery === "" ||
+                  (chat.title || "New Chat").toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  (chat.databaseConnectionName || "").toLowerCase().includes(searchQuery.toLowerCase())
+                )
+                .map((chat) => (
                 <button
                   key={chat.id}
                   onClick={() => selectConversation(chat.id)}
@@ -359,9 +436,15 @@ export default function AIPage() {
                   <span className="text-sm font-medium truncate">
                     {chat.title || "New Chat"}
                   </span>
-                  <span className="text-xs text-gray-400">
-                    {formatRelativeTime(chat.updatedAt)}
-                  </span>
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    {chat.databaseConnectionName && (
+                      <span className="truncate max-w-[100px]">
+                        {chat.databaseConnectionName}
+                      </span>
+                    )}
+                    {chat.databaseConnectionName && <span>·</span>}
+                    <span>{formatRelativeTime(chat.updatedAt)}</span>
+                  </div>
                 </button>
               ))
             )}
@@ -514,40 +597,146 @@ export default function AIPage() {
                     {(() => {
                       const parsedResult = parseQueryResult(message.queryResult);
                       if (!parsedResult || parsedResult.rows.length === 0) return null;
-                      return (
-                        <div className="bg-[#fafafc] rounded-xl p-1 overflow-x-auto">
-                          {/* Table Header */}
-                          <div className="flex items-center gap-2.5 px-3 py-2.5 min-w-fit">
-                            <span className="w-10 text-sm font-semibold">#</span>
-                            {parsedResult.columns.map((col) => (
-                              <span
-                                key={col}
-                                className="flex-1 min-w-[90px] text-sm font-semibold"
-                              >
-                                {col}
-                              </span>
-                            ))}
-                          </div>
-                          {/* Table Rows */}
-                          {parsedResult.rows.slice(0, 10).map((row, idx) => (
-                            <div
-                              key={idx}
-                              className="flex items-center gap-2.5 px-3 py-2.5 bg-white rounded-lg min-w-fit"
-                            >
-                              <span className="w-10 text-sm">{idx + 1}</span>
-                              {parsedResult.columns.map((col) => (
-                                <span
-                                  key={col}
-                                  className="flex-1 min-w-[90px] text-sm truncate"
-                                >
-                                  {String(row[col] ?? "")}
-                                </span>
+
+                      // For single value results (1 row, 1-2 columns), show as highlighted text
+                      const isSingleValue = parsedResult.rows.length === 1 && parsedResult.columns.length <= 2;
+                      if (isSingleValue) {
+                        const row = parsedResult.rows[0];
+                        const values = parsedResult.columns.map((col) => ({
+                          label: col,
+                          value: row[col],
+                        }));
+                        return (
+                          <div className="bg-[#f0fdf4] border border-green-200 rounded-xl p-4 mt-2">
+                            <div className="flex flex-wrap gap-4">
+                              {values.map((item, idx) => (
+                                <div key={idx} className="flex flex-col">
+                                  <span className="text-xs text-gray-500">{item.label}</span>
+                                  <span className="text-lg font-semibold text-gray-900">
+                                    {typeof item.value === "number" ? item.value.toLocaleString() : String(item.value)}
+                                  </span>
+                                </div>
                               ))}
                             </div>
-                          ))}
-                          {parsedResult.rowCount > 10 && (
-                            <div className="text-xs text-gray-400 text-center py-2">
-                              Showing 10 of {parsedResult.rowCount} rows
+                          </div>
+                        );
+                      }
+
+                      // Get current view mode for this message, default to table
+                      const currentView = chartViews[message.id] || "table";
+
+                      // Check if data is chartable (has at least one numeric column)
+                      const hasNumericData = parsedResult.columns.slice(1).some((col) =>
+                        parsedResult.rows.some((row) => {
+                          const val = row[col];
+                          return typeof val === "number" || !isNaN(Number(val));
+                        })
+                      );
+
+                      return (
+                        <div className="bg-[#fafafc] rounded-xl overflow-hidden">
+                          {/* View Toggle Buttons */}
+                          {hasNumericData && parsedResult.rows.length > 1 && (
+                            <div className="flex items-center gap-1 p-2 border-b border-gray-200">
+                              <button
+                                onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "table" }))}
+                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                  currentView === "table"
+                                    ? "bg-black text-white"
+                                    : "bg-white text-gray-600 hover:bg-gray-100"
+                                }`}
+                              >
+                                Table
+                              </button>
+                              <button
+                                onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "bar" }))}
+                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                  currentView === "bar"
+                                    ? "bg-black text-white"
+                                    : "bg-white text-gray-600 hover:bg-gray-100"
+                                }`}
+                              >
+                                Bar
+                              </button>
+                              <button
+                                onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "line" }))}
+                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                  currentView === "line"
+                                    ? "bg-black text-white"
+                                    : "bg-white text-gray-600 hover:bg-gray-100"
+                                }`}
+                              >
+                                Line
+                              </button>
+                              <button
+                                onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "pie" }))}
+                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                  currentView === "pie"
+                                    ? "bg-black text-white"
+                                    : "bg-white text-gray-600 hover:bg-gray-100"
+                                }`}
+                              >
+                                Pie
+                              </button>
+                              <button
+                                onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "area" }))}
+                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                  currentView === "area"
+                                    ? "bg-black text-white"
+                                    : "bg-white text-gray-600 hover:bg-gray-100"
+                                }`}
+                              >
+                                Area
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Chart View */}
+                          {currentView !== "table" && (
+                            <DataChart
+                              data={parsedResult.rows}
+                              columns={parsedResult.columns}
+                              chartType={currentView}
+                            />
+                          )}
+
+                          {/* Table View */}
+                          {currentView === "table" && (
+                            <div className="p-1 overflow-x-auto">
+                              {/* Table Header */}
+                              <div className="flex items-center gap-2.5 px-3 py-2.5 min-w-fit">
+                                <span className="w-10 text-sm font-semibold">#</span>
+                                {parsedResult.columns.map((col) => (
+                                  <span
+                                    key={col}
+                                    className="flex-1 min-w-[90px] text-sm font-semibold"
+                                  >
+                                    {col}
+                                  </span>
+                                ))}
+                              </div>
+                              {/* Table Rows */}
+                              {parsedResult.rows.slice(0, 10).map((row, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex items-center gap-2.5 px-3 py-2.5 bg-white rounded-lg min-w-fit"
+                                >
+                                  <span className="w-10 text-sm">{idx + 1}</span>
+                                  {parsedResult.columns.map((col) => (
+                                    <span
+                                      key={col}
+                                      className="flex-1 min-w-[90px] text-sm truncate"
+                                    >
+                                      {String(row[col] ?? "")}
+                                    </span>
+                                  ))}
+                                </div>
+                              ))}
+                              {parsedResult.rowCount > 10 && (
+                                <div className="text-xs text-gray-400 text-center py-2">
+                                  Showing 10 of {parsedResult.rowCount} rows
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -606,14 +795,16 @@ export default function AIPage() {
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="Ask anything about your data..."
               disabled={isSending}
-              className="flex-1 text-sm outline-none placeholder:text-gray-400 disabled:opacity-50"
+              className="flex-1 text-sm outline-none border-none focus:outline-none focus:ring-0 placeholder:text-gray-400 disabled:opacity-50"
             />
             <button
               type="submit"
               disabled={isSending || !inputValue.trim()}
-              className="w-9 h-9 bg-[#18181b] rounded-[10px] flex items-center justify-center flex-shrink-0 hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-9 h-9 bg-[#18181b] rounded-full flex items-center justify-center flex-shrink-0 hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span className="text-white text-sm">&rarr;</span>
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
+              </svg>
             </button>
           </form>
         </div>

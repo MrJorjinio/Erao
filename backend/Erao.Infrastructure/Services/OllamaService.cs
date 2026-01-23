@@ -64,6 +64,7 @@ If the question cannot be answered with the given schema, respond with: ERROR: [
                 messages.Add(new { role = "system", content = schemaContext });
             }
 
+            // Add conversation history
             foreach (var (role, content) in history)
             {
                 messages.Add(new { role, content });

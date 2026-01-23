@@ -20,6 +20,11 @@ public class User : BaseEntity
     public string? PasswordResetOtp { get; set; }
     public DateTime? PasswordResetOtpExpiry { get; set; }
 
+    // Email verification
+    public bool IsEmailVerified { get; set; } = false;
+    public string? EmailVerificationOtp { get; set; }
+    public DateTime? EmailVerificationOtpExpiry { get; set; }
+
     // Navigation properties
     public virtual ICollection<DatabaseConnection> DatabaseConnections { get; set; } = new List<DatabaseConnection>();
     public virtual ICollection<Conversation> Conversations { get; set; } = new List<Conversation>();

@@ -22,21 +22,21 @@ public class AuthController : ControllerBase
 
     [HttpPost("register")]
     [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<AuthResponse>>> Register([FromBody] RegisterRequest request)
+    public async Task<ActionResult<ApiResponse<RegisterResponse>>> Register([FromBody] RegisterRequest request)
     {
         try
         {
             var result = await _authService.RegisterAsync(request);
-            return Ok(ApiResponse<AuthResponse>.SuccessResponse(result, "Registration successful"));
+            return Ok(ApiResponse<RegisterResponse>.SuccessResponse(result, "Registration successful. Please verify your email."));
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(ApiResponse<AuthResponse>.ErrorResponse(ex.Message));
+            return BadRequest(ApiResponse<RegisterResponse>.ErrorResponse(ex.Message));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during registration");
-            return StatusCode(500, ApiResponse<AuthResponse>.ErrorResponse("An error occurred during registration"));
+            return StatusCode(500, ApiResponse<RegisterResponse>.ErrorResponse("An error occurred during registration"));
         }
     }
 
@@ -52,6 +52,11 @@ public class AuthController : ControllerBase
         catch (UnauthorizedAccessException ex)
         {
             return Unauthorized(ApiResponse<AuthResponse>.ErrorResponse(ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Email not verified
+            return BadRequest(ApiResponse<AuthResponse>.ErrorResponse(ex.Message));
         }
         catch (Exception ex)
         {
@@ -168,6 +173,43 @@ public class AuthController : ControllerBase
         {
             _logger.LogError(ex, "Error resetting password");
             return StatusCode(500, ApiResponse.ErrorResponse("An error occurred while resetting password"));
+        }
+    }
+
+    [HttpPost("verify-email")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<AuthResponse>>> VerifyEmail([FromBody] VerifyOtpRequest request)
+    {
+        try
+        {
+            var result = await _authService.VerifyEmailAsync(request);
+            return Ok(ApiResponse<AuthResponse>.SuccessResponse(result, "Email verified successfully"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<AuthResponse>.ErrorResponse(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error verifying email");
+            return StatusCode(500, ApiResponse<AuthResponse>.ErrorResponse("An error occurred while verifying email"));
+        }
+    }
+
+    [HttpPost("resend-email-verification")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse>> ResendEmailVerification([FromBody] ResendOtpRequest request)
+    {
+        try
+        {
+            await _authService.ResendEmailVerificationOtpAsync(request.Email);
+            // Always return success to prevent email enumeration
+            return Ok(ApiResponse.SuccessResponse("If an account with that email exists and is not verified, a new code has been sent."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error resending email verification OTP");
+            return StatusCode(500, ApiResponse.ErrorResponse("An error occurred while processing your request"));
         }
     }
 
