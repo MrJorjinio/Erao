@@ -99,6 +99,8 @@ export interface Conversation {
   title: string;
   databaseConnectionId: string | null;
   databaseConnectionName: string | null;
+  fileDocumentId: string | null;
+  fileDocumentName: string | null;
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string | null;
@@ -111,6 +113,7 @@ export interface ConversationDetail extends Conversation {
 export interface CreateConversationPayload {
   title?: string;
   databaseConnectionId?: string;
+  fileDocumentId?: string;
 }
 
 // Message types
@@ -184,6 +187,62 @@ export interface UsageLogEntry {
   createdAt: string;
 }
 
+// File types
+export type FileType = 'Excel' | 'Word' | 'Csv' | 'Xml' | 'Json' | 'Text';
+export type FileProcessingStatus = 'Pending' | 'Processing' | 'Completed' | 'Failed';
+
+export interface FileDocument {
+  id: string;
+  fileName: string;
+  originalFileName: string;
+  fileType: FileType;
+  fileSizeBytes: number;
+  rowCount: number | null;
+  status: FileProcessingStatus;
+  errorMessage: string | null;
+  columns: string[] | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FileUploadResponse {
+  success: boolean;
+  message: string;
+  file: FileDocument | null;
+}
+
+export interface FileListResponse {
+  files: FileDocument[];
+  totalCount: number;
+}
+
+export interface FileSchemaResponse {
+  fileId: string;
+  fileName: string;
+  fileType: FileType;
+  columns: ColumnInfo[];
+  totalRows: number;
+  sampleData: string | null;
+}
+
+export interface ColumnInfo {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  maxLength: number | null;
+}
+
+export interface FileContentResponse {
+  fileId: string;
+  fileName: string;
+  fileType: FileType;
+  columns: string[];
+  data: Record<string, unknown>[];
+  totalRows: number;
+  pageSize: number;
+  currentPage: number;
+}
+
 class ApiClient {
   private baseUrl: string;
 
@@ -193,7 +252,8 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    skipAuthRefresh = false
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`;
 
@@ -202,8 +262,8 @@ class ApiClient {
       ...(options.headers as Record<string, string>),
     };
 
-    // Add auth token if available
-    if (typeof window !== 'undefined') {
+    // Add auth token if available (skip for auth endpoints)
+    if (typeof window !== 'undefined' && !skipAuthRefresh) {
       const token = localStorage.getItem('accessToken');
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
@@ -215,8 +275,8 @@ class ApiClient {
       headers,
     });
 
-    // Handle 401 - try to refresh token
-    if (response.status === 401) {
+    // Handle 401 - try to refresh token (skip for auth endpoints)
+    if (response.status === 401 && !skipAuthRefresh) {
       const refreshed = await this.tryRefreshToken();
       if (refreshed) {
         // Retry the request with new token
@@ -278,28 +338,28 @@ class ApiClient {
     return this.request<RegisterResponse>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async verifyEmail(payload: { email: string; otp: string }): Promise<ApiResponse<AuthResponse>> {
     return this.request<AuthResponse>('/api/auth/verify-email', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async resendEmailVerification(email: string): Promise<ApiResponse<null>> {
     return this.request<null>('/api/auth/resend-email-verification', {
       method: 'POST',
       body: JSON.stringify({ email }),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async login(payload: LoginPayload): Promise<ApiResponse<AuthResponse>> {
     return this.request<AuthResponse>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async logout(): Promise<ApiResponse<null>> {
@@ -312,35 +372,35 @@ class ApiClient {
     return this.request<AuthTokens>('/api/auth/refresh', {
       method: 'POST',
       body: JSON.stringify({ refreshToken }),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async forgotPassword(email: string): Promise<ApiResponse<null>> {
     return this.request<null>('/api/auth/forgot-password', {
       method: 'POST',
       body: JSON.stringify({ email }),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async verifyOtp(email: string, otp: string): Promise<ApiResponse<boolean>> {
     return this.request<boolean>('/api/auth/verify-otp', {
       method: 'POST',
       body: JSON.stringify({ email, otp }),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async resetPassword(email: string, otp: string, newPassword: string): Promise<ApiResponse<null>> {
     return this.request<null>('/api/auth/reset-password', {
       method: 'POST',
       body: JSON.stringify({ email, otp, newPassword }),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   async resendOtp(email: string): Promise<ApiResponse<null>> {
     return this.request<null>('/api/auth/resend-otp', {
       method: 'POST',
       body: JSON.stringify({ email }),
-    });
+    }, true); // Skip auth refresh for public endpoint
   }
 
   // ========== Database endpoints ==========
@@ -452,6 +512,56 @@ class ApiClient {
     return this.request<SubscriptionResponse>('/api/subscriptions/upgrade', {
       method: 'PUT',
       body: JSON.stringify({ newTier }),
+    });
+  }
+
+  // ========== File endpoints ==========
+  async uploadFile(file: File): Promise<FileUploadResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('accessToken');
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/files/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new ApiError(data.message || 'Failed to upload file', response.status, data);
+    }
+
+    return data;
+  }
+
+  async getFiles(): Promise<ApiResponse<FileListResponse>> {
+    return this.request<FileListResponse>('/api/files');
+  }
+
+  async getFile(fileId: string): Promise<ApiResponse<FileDocument>> {
+    return this.request<FileDocument>(`/api/files/${fileId}`);
+  }
+
+  async getFileSchema(fileId: string): Promise<ApiResponse<FileSchemaResponse>> {
+    return this.request<FileSchemaResponse>(`/api/files/${fileId}/schema`);
+  }
+
+  async getFileContent(fileId: string, page = 1, pageSize = 100): Promise<ApiResponse<FileContentResponse>> {
+    return this.request<FileContentResponse>(`/api/files/${fileId}/content?page=${page}&pageSize=${pageSize}`);
+  }
+
+  async deleteFile(fileId: string): Promise<ApiResponse<null>> {
+    return this.request<null>(`/api/files/${fileId}`, {
+      method: 'DELETE',
     });
   }
 }

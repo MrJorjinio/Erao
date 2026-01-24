@@ -14,6 +14,7 @@ public class EraoDbContext : DbContext
     public DbSet<Conversation> Conversations { get; set; }
     public DbSet<Message> Messages { get; set; }
     public DbSet<UsageLog> UsageLogs { get; set; }
+    public DbSet<FileDocument> FileDocuments { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -50,6 +51,25 @@ public class EraoDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        // FileDocument configuration
+        modelBuilder.Entity<FileDocument>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.FileName).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.OriginalFileName).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.FileType).HasConversion<int>();
+            entity.Property(e => e.Status).HasConversion<int>();
+            entity.Property(e => e.ParsedContent).HasColumnType("text");
+            entity.Property(e => e.SchemaInfo).HasColumnType("text");
+            entity.Property(e => e.StoragePath).HasMaxLength(1000);
+            entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
+
+            entity.HasOne(e => e.User)
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // Conversation configuration
         modelBuilder.Entity<Conversation>(entity =>
         {
@@ -64,6 +84,11 @@ public class EraoDbContext : DbContext
             entity.HasOne(e => e.DatabaseConnection)
                 .WithMany(d => d.Conversations)
                 .HasForeignKey(e => e.DatabaseConnectionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(e => e.FileDocument)
+                .WithMany(f => f.Conversations)
+                .HasForeignKey(e => e.FileDocumentId)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 

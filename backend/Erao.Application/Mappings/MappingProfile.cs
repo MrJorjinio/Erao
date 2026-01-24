@@ -21,6 +21,10 @@ public class MappingProfile : Profile
         CreateMap<Conversation, ConversationDto>()
             .ForMember(dest => dest.DatabaseConnectionName,
                 opt => opt.MapFrom(src => src.DatabaseConnection != null ? src.DatabaseConnection.Name : null))
+            .ForMember(dest => dest.FileDocumentName,
+                opt => opt.MapFrom(src => src.FileDocument != null ? src.FileDocument.OriginalFileName : null))
+            .ForMember(dest => dest.LastMessageAt,
+                opt => opt.MapFrom(src => src.Messages.Any() ? src.Messages.Max(m => m.CreatedAt) : (DateTime?)null))
             .ForMember(dest => dest.Messages,
                 opt => opt.MapFrom(src => src.Messages.OrderBy(m => m.CreatedAt)));
 

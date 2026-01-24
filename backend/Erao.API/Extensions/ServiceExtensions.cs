@@ -12,6 +12,7 @@ using Erao.Infrastructure.Data;
 using Erao.Infrastructure.Repositories;
 using Erao.Infrastructure.Security;
 using Erao.Infrastructure.Services;
+using Erao.Infrastructure.Services.Parsers;
 
 namespace Erao.API.Extensions;
 
@@ -43,6 +44,12 @@ public static class ServiceExtensions
         services.AddHttpClient<IOllamaService, OllamaService>();
         services.AddScoped<IDatabaseQueryService, DatabaseQueryService>();
         services.AddScoped<IEmailService, EmailService>();
+
+        // File parsing services
+        services.AddScoped<IFileParser, ExcelFileParser>();
+        services.AddScoped<IFileParser, WordFileParser>();
+        services.AddScoped<IFileParser, CsvFileParser>();
+        services.AddScoped<IFileDocumentService, FileDocumentService>();
 
         // AutoMapper
         services.AddAutoMapper(typeof(MappingProfile));

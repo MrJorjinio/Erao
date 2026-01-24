@@ -7,5 +7,6 @@ public interface IUnitOfWork : IDisposable
     IConversationRepository Conversations { get; }
     IMessageRepository Messages { get; }
     IUsageLogRepository UsageLogs { get; }
+    IFileDocumentRepository FileDocuments { get; }
     Task<int> SaveChangesAsync();
 }

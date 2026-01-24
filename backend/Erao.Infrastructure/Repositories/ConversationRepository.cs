@@ -15,6 +15,7 @@ public class ConversationRepository : Repository<Conversation>, IConversationRep
     {
         return await _dbSet
             .Include(c => c.DatabaseConnection)
+            .Include(c => c.FileDocument)
             .Where(c => c.UserId == userId)
             .OrderByDescending(c => c.UpdatedAt)
             .ToListAsync();
@@ -25,6 +26,7 @@ public class ConversationRepository : Repository<Conversation>, IConversationRep
         return await _dbSet
             .Include(c => c.Messages.OrderBy(m => m.CreatedAt))
             .Include(c => c.DatabaseConnection)
+            .Include(c => c.FileDocument)
             .FirstOrDefaultAsync(c => c.Id == id);
     }
 }

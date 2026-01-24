@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -36,6 +37,8 @@ const COLORS = [
   "#8b5cf6",
   "#ec4899",
   "#06b6d4",
+  "#84cc16",
+  "#14b8a6",
 ];
 
 // Truncate long labels
@@ -44,69 +47,180 @@ function truncateLabel(label: string, maxLength: number = 15): string {
   return label.substring(0, maxLength - 3) + "...";
 }
 
-export function DataChart({ data, columns, chartType }: DataChartProps) {
-  if (!data || data.length === 0 || chartType === "table") {
-    return null;
-  }
+// Aggregate data by label column for large datasets
+function aggregateData(
+  data: Record<string, unknown>[],
+  labelColumn: string,
+  valueColumns: string[],
+  maxItems: number = 50
+): Record<string, unknown>[] {
+  // Group by label and sum values
+  const grouped = new Map<string, Record<string, number>>();
 
-  // Determine which column is the label (usually first text column) and which are values
-  const labelColumn = columns[0];
-  const valueColumns = columns.slice(1).filter((col) => {
-    // Check if this column has numeric values
-    return data.some((row) => {
+  data.forEach((row) => {
+    const label = String(row[labelColumn] ?? "Unknown");
+    if (!grouped.has(label)) {
+      grouped.set(label, {});
+      valueColumns.forEach((col) => {
+        grouped.get(label)![col] = 0;
+      });
+    }
+    const group = grouped.get(label)!;
+    valueColumns.forEach((col) => {
       const val = row[col];
-      return typeof val === "number" || !isNaN(Number(val));
+      group[col] += typeof val === "number" ? val : Number(val) || 0;
     });
   });
 
-  // If no numeric columns found, use all columns except first
-  const dataColumns = valueColumns.length > 0 ? valueColumns : columns.slice(1);
+  // Convert to array and sort by first value column (descending)
+  const result: Record<string, unknown>[] = Array.from(grouped.entries()).map(([label, values]) => ({
+    name: truncateLabel(label),
+    fullName: label,
+    ...values,
+  }));
 
-  // Transform data for recharts
-  const chartData = data.map((row) => {
+  // Sort by the first value column descending
+  if (valueColumns.length > 0) {
+    result.sort((a, b) => (b[valueColumns[0]] as number) - (a[valueColumns[0]] as number));
+  }
+
+  // Limit to maxItems
+  return result.slice(0, maxItems);
+}
+
+// Sample data evenly for line/area charts to show trends
+function sampleData(
+  data: Record<string, unknown>[],
+  labelColumn: string,
+  valueColumns: string[],
+  maxPoints: number = 100
+): Record<string, unknown>[] {
+  if (data.length <= maxPoints) {
+    return data.map((row) => {
+      const fullName = String(row[labelColumn] ?? "");
+      const item: Record<string, unknown> = {
+        name: truncateLabel(fullName, 12),
+        fullName: fullName,
+      };
+      valueColumns.forEach((col) => {
+        const val = row[col];
+        item[col] = typeof val === "number" ? val : Number(val) || 0;
+      });
+      return item;
+    });
+  }
+
+  // Sample evenly across the dataset
+  const step = Math.ceil(data.length / maxPoints);
+  const sampled: Record<string, unknown>[] = [];
+
+  for (let i = 0; i < data.length; i += step) {
+    const row = data[i];
     const fullName = String(row[labelColumn] ?? "");
     const item: Record<string, unknown> = {
-      name: truncateLabel(fullName),
-      fullName: fullName, // Keep full name for tooltip
+      name: truncateLabel(fullName, 12),
+      fullName: fullName,
     };
-    dataColumns.forEach((col) => {
+    valueColumns.forEach((col) => {
       const val = row[col];
       item[col] = typeof val === "number" ? val : Number(val) || 0;
     });
-    return item;
-  });
+    sampled.push(item);
+  }
 
-  // Check if all values are zero
-  const hasNonZeroValues = chartData.some((item) =>
-    dataColumns.some((col) => (item[col] as number) > 0)
-  );
+  return sampled;
+}
 
-  // For pie chart, we need to restructure data if multiple value columns
-  const pieData = dataColumns.length === 1
-    ? chartData.map((item, index) => ({
-        name: item.name as string,
-        fullName: item.fullName as string,
-        value: item[dataColumns[0]] as number,
-        fill: COLORS[index % COLORS.length],
-      }))
-    : dataColumns.map((col, index) => ({
-        name: col,
-        fullName: col,
-        value: chartData.reduce((sum, item) => sum + (item[col] as number), 0),
-        fill: COLORS[index % COLORS.length],
-      }));
+export function DataChart({ data, columns, chartType }: DataChartProps) {
+  // Memoize all chart data processing
+  const chartConfig = useMemo(() => {
+    if (!data || data.length === 0 || chartType === "table") {
+      return null;
+    }
 
-  // Calculate smart interval for X-axis based on data count
+    // Simple logic: AI ensures first column is label, rest are values
+    // The backend AI is instructed to order data properly for visualization
+    const labelColumn = columns[0];
+    const dataColumns = columns.slice(1).filter(col =>
+      data.some(row => {
+        const val = row[col];
+        return typeof val === "number" || !isNaN(Number(val));
+      })
+    );
+
+    const isLargeDataset = data.length > 50;
+
+    // Process data based on chart type and size
+    let chartData: Record<string, unknown>[];
+
+    if (chartType === "line" || chartType === "area") {
+      // For line/area, sample data to show trends
+      chartData = sampleData(data, labelColumn, dataColumns, 100);
+    } else {
+      // For bar/pie, aggregate data
+      chartData = isLargeDataset
+        ? aggregateData(data, labelColumn, dataColumns, chartType === "pie" ? 10 : 30)
+        : data.map((row) => {
+            const fullName = String(row[labelColumn] ?? "");
+            const item: Record<string, unknown> = {
+              name: truncateLabel(fullName),
+              fullName: fullName,
+            };
+            dataColumns.forEach((col) => {
+              const val = row[col];
+              item[col] = typeof val === "number" ? val : Number(val) || 0;
+            });
+            return item;
+          });
+    }
+
+    const hasNonZeroValues = chartData.some((item) =>
+      dataColumns.some((col) => (item[col] as number) > 0)
+    );
+
+    // Prepare pie data
+    let pieData: Array<{ name: string; fullName: string; value: number; fill: string }> = [];
+    if (chartType === "pie") {
+      if (dataColumns.length === 1) {
+        pieData = chartData.map((item, index) => ({
+          name: item.name as string,
+          fullName: item.fullName as string,
+          value: item[dataColumns[0]] as number,
+          fill: COLORS[index % COLORS.length],
+        }));
+      } else {
+        pieData = dataColumns.map((col, index) => ({
+          name: col,
+          fullName: col,
+          value: chartData.reduce((sum, item) => sum + (item[col] as number), 0),
+          fill: COLORS[index % COLORS.length],
+        }));
+      }
+      // Filter zeros and sort by value
+      pieData = pieData.filter((item) => item.value > 0).sort((a, b) => b.value - a.value);
+    }
+
+    return {
+      chartData,
+      dataColumns,
+      pieData,
+      hasNonZeroValues,
+      isLargeDataset,
+    };
+  }, [data, columns, chartType]);
+
+  if (!chartConfig) return null;
+
+  const { chartData, dataColumns, pieData, hasNonZeroValues, isLargeDataset } = chartConfig;
   const dataCount = chartData.length;
+
+  // X-axis config
   const getXAxisConfig = () => {
     if (dataCount <= 10) {
-      // Show all labels
       return { interval: 0, angle: 0, textAnchor: "middle" as const, dy: 10 };
     } else if (dataCount <= 20) {
-      // Rotate labels, show all
       return { interval: 0, angle: -45, textAnchor: "end" as const, dy: 5 };
     } else {
-      // Rotate and skip some labels
       const skipInterval = Math.ceil(dataCount / 15);
       return { interval: skipInterval - 1, angle: -45, textAnchor: "end" as const, dy: 5 };
     }
@@ -115,16 +229,17 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
   const xAxisConfig = getXAxisConfig();
   const bottomMargin = dataCount > 10 ? 60 : 20;
 
-  // Custom tooltip to show full name
+  // Custom tooltip
   const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) => {
     if (active && payload && payload.length) {
-      const fullName = chartData.find(d => d.name === label)?.fullName || label;
+      const found = chartData.find(d => d.name === label);
+      const fullName = found ? String(found.fullName) : (label || "");
       return (
-        <div className="bg-white border border-gray-200 rounded-lg p-2 shadow-lg">
-          <p className="text-sm font-medium text-gray-900 mb-1">{fullName}</p>
+        <div className="bg-white border border-gray-200 rounded-lg p-2 shadow-lg max-w-xs">
+          <p className="text-sm font-medium text-gray-900 mb-1 truncate">{fullName}</p>
           {payload.map((entry, index) => (
             <p key={index} className="text-xs" style={{ color: entry.color }}>
-              {entry.name}: {entry.value}
+              {entry.name}: {typeof entry.value === "number" ? entry.value.toLocaleString() : entry.value}
             </p>
           ))}
         </div>
@@ -133,7 +248,6 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
     return null;
   };
 
-  // Show message if all values are zero
   if (!hasNonZeroValues) {
     return (
       <div className="w-full bg-white rounded-xl p-4">
@@ -160,7 +274,7 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
                 dy={xAxisConfig.dy}
                 height={bottomMargin + 20}
               />
-              <YAxis tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => v.toLocaleString()} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
               {dataColumns.map((col, index) => (
@@ -189,7 +303,7 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
                 dy={xAxisConfig.dy}
                 height={bottomMargin + 20}
               />
-              <YAxis tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => v.toLocaleString()} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
               {dataColumns.map((col, index) => (
@@ -199,7 +313,7 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
                   dataKey={col}
                   stroke={COLORS[index % COLORS.length]}
                   strokeWidth={2}
-                  dot={dataCount <= 20 ? { fill: COLORS[index % COLORS.length], strokeWidth: 2, r: 3 } : false}
+                  dot={dataCount <= 30 ? { fill: COLORS[index % COLORS.length], strokeWidth: 2, r: 2 } : false}
                 />
               ))}
             </LineChart>
@@ -220,7 +334,7 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
                 dy={xAxisConfig.dy}
                 height={bottomMargin + 20}
               />
-              <YAxis tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => v.toLocaleString()} />
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
               {dataColumns.map((col, index) => (
@@ -238,10 +352,7 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
         );
 
       case "pie":
-        // Filter out zero values for pie chart
-        const nonZeroPieData = pieData.filter(item => item.value > 0);
-
-        if (nonZeroPieData.length === 0) {
+        if (pieData.length === 0) {
           return (
             <div className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
               No data to visualize (all values are 0)
@@ -249,40 +360,41 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
           );
         }
 
-        // Limit pie chart to top 10 items for readability
-        const limitedPieData = nonZeroPieData.length > 10
-          ? nonZeroPieData.sort((a, b) => b.value - a.value).slice(0, 10)
-          : nonZeroPieData;
+        // Calculate total for percentages
+        const total = pieData.reduce((sum, item) => sum + item.value, 0);
+
+        // Only show labels for slices > 5% to avoid overlap
+        const renderLabel = ({ name, percent }: { name?: string; percent?: number }) => {
+          if (!percent || percent < 0.05) return ""; // Hide labels for slices < 5%
+          return `${truncateLabel(name || "", 10)} (${(percent * 100).toFixed(0)}%)`;
+        };
 
         return (
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
-                data={limitedPieData}
+                data={pieData}
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={limitedPieData.length <= 6
-                  ? ({ name, percent }) => `${truncateLabel(name, 10)} (${((percent ?? 0) * 100).toFixed(0)}%)`
-                  : false
-                }
+                label={pieData.length <= 8 ? renderLabel : false}
                 outerRadius={90}
                 dataKey="value"
               >
-                {limitedPieData.map((entry, index) => (
+                {pieData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip
-                formatter={(value: number, name: string) => {
-                  const item = limitedPieData.find(d => d.name === name);
-                  return [value, item?.fullName || name];
-                }}
                 contentStyle={{
                   backgroundColor: "white",
                   border: "1px solid #e5e7eb",
                   borderRadius: "8px",
                   fontSize: "12px",
+                }}
+                formatter={(value) => {
+                  const numVal = typeof value === "number" ? value : Number(value) || 0;
+                  return [`${numVal.toLocaleString()} (${((numVal / total) * 100).toFixed(1)}%)`, ""];
                 }}
               />
               <Legend
@@ -300,6 +412,11 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
 
   return (
     <div className="w-full bg-white rounded-xl p-4">
+      {isLargeDataset && chartType !== "table" && (
+        <div className="text-xs text-gray-400 mb-2 text-center">
+          {chartType === "pie" ? "Top 10 by value" : chartType === "line" || chartType === "area" ? `Sampled from ${data.length} rows` : `Top 30 by value (from ${data.length} rows)`}
+        </div>
+      )}
       {renderChart()}
     </div>
   );
@@ -307,20 +424,14 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
 
 // Helper function to detect best chart type based on data
 export function detectChartType(columns: string[], rowCount: number): ChartType {
-  // If only 1-2 rows, pie chart works well for comparison
   if (rowCount <= 5 && rowCount > 1) {
     return "pie";
   }
-
-  // If many rows, bar or line chart
   if (rowCount > 5 && rowCount <= 15) {
     return "bar";
   }
-
-  // If lots of data points, line chart for trends
   if (rowCount > 15) {
     return "line";
   }
-
   return "bar";
 }

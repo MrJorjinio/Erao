@@ -52,17 +52,30 @@ public class ConversationService : IConversationService
             }
         }
 
+        // Validate file document if provided
+        if (request.FileDocumentId.HasValue)
+        {
+            var fileDoc = await _unitOfWork.FileDocuments.GetByIdAsync(request.FileDocumentId.Value);
+            if (fileDoc == null || fileDoc.UserId != userId)
+            {
+                throw new InvalidOperationException("File document not found");
+            }
+        }
+
         var conversation = new Conversation
         {
             UserId = userId,
-            Title = request.Title,
-            DatabaseConnectionId = request.DatabaseConnectionId
+            Title = request.Title ?? "New Chat",
+            DatabaseConnectionId = request.DatabaseConnectionId,
+            FileDocumentId = request.FileDocumentId
         };
 
         await _unitOfWork.Conversations.AddAsync(conversation);
         await _unitOfWork.SaveChangesAsync();
 
-        return _mapper.Map<ConversationDto>(conversation);
+        // Reload conversation to get navigation properties
+        var savedConversation = await _unitOfWork.Conversations.GetWithMessagesAsync(conversation.Id);
+        return _mapper.Map<ConversationDto>(savedConversation);
     }
 
     public async Task DeleteAsync(Guid id, Guid userId)

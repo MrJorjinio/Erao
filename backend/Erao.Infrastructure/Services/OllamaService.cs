@@ -79,8 +79,9 @@ If the question cannot be answered with the given schema, respond with: ERROR: [
                 stream = false,
                 options = new
                 {
-                    temperature = 0.7,
-                    num_predict = 4096
+                    temperature = 0.1,    // Low temperature for strict instruction following
+                    num_predict = 16384,  // Max response tokens (increased for large data)
+                    num_ctx = 32768       // Context window size
                 }
             };
 

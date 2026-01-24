@@ -81,9 +81,11 @@ public class ChatService : IChatService
         };
         await _unitOfWork.Messages.AddAsync(userMessage);
 
-        // Get schema context if database connection is set
+        // Get schema context if database connection or file is set
         string? schemaContext = null;
+        string? fileDataContext = null;
         DatabaseConnection? dbConnection = null;
+        FileDocument? fileDocument = null;
 
         if (conversation.DatabaseConnectionId.HasValue)
         {
@@ -106,6 +108,15 @@ public class ChatService : IChatService
                     dbConnection.SchemaCache = schemaContext;
                     await _unitOfWork.DatabaseConnections.UpdateAsync(dbConnection);
                 }
+            }
+        }
+        else if (conversation.FileDocumentId.HasValue)
+        {
+            fileDocument = await _unitOfWork.FileDocuments.GetByIdAsync(conversation.FileDocumentId.Value);
+            if (fileDocument != null)
+            {
+                schemaContext = fileDocument.SchemaInfo;
+                fileDataContext = fileDocument.ParsedContent;
             }
         }
 
@@ -154,8 +165,10 @@ public class ChatService : IChatService
             })
             .ToList();
 
-        // Build system prompt
-        var systemPrompt = BuildSystemPrompt(schemaContext);
+        // Build system prompt - different for database vs file
+        var systemPrompt = fileDocument != null
+            ? BuildFileSystemPrompt(schemaContext, fileDataContext, fileDocument.OriginalFileName)
+            : BuildSystemPrompt(schemaContext);
 
         // Get AI response with full conversation history
         var (aiResponse, tokensUsed) = await _ollamaService.ChatAsync(request.Message, history, systemPrompt);
@@ -164,7 +177,7 @@ public class ChatService : IChatService
         Console.WriteLine($"[DEBUG] AI Response length: {aiResponse.Length}");
         Console.WriteLine($"[DEBUG] AI Response: {aiResponse}");
 
-        // Try to extract SQL from response
+        // Try to extract SQL from response (for database mode) or analyze file data
         string? sqlQuery = null;
         string? queryResult = null;
 
@@ -192,13 +205,21 @@ public class ChatService : IChatService
                 }
             }
         }
+        else if (fileDocument != null)
+        {
+            // For file-based conversations, extract JSON data for table display
+            queryResult = ExtractJsonBlock(aiResponse);
+        }
+
+        // Clean the response - remove code blocks that are now in queryResult
+        var cleanedContent = StripCodeBlocks(aiResponse);
 
         // Save assistant message
         var assistantMessage = new Message
         {
             ConversationId = conversation.Id,
             Role = MessageRole.Assistant,
-            Content = aiResponse,
+            Content = cleanedContent,
             SqlQuery = sqlQuery,
             QueryResult = queryResult,
             TokensUsed = tokensUsed
@@ -247,18 +268,33 @@ IMPORTANT - Stay focused on databases ONLY:
 - If a user asks ANYTHING unrelated to databases, politely decline and redirect to database topics
 
 CRITICAL - SQL FORMAT REQUIREMENT:
-You MUST format SQL queries EXACTLY like this (this is mandatory):
+Your response MUST include a SQL query wrapped in a code block. This is MANDATORY.
 
+FORMAT (you MUST follow this exactly):
 ```sql
 SELECT COUNT(*) AS ""Total"" FROM tablename
 ```
 
-- Start with triple backtick + sql
-- Then your SQL query
-- End with triple backtick
-- Without this EXACT format, the query will NOT run
-- NEVER use placeholders - query the real data directly
-- NEVER ask user for IDs - just execute the query
+ABSOLUTE RULES - VIOLATIONS WILL CAUSE ERRORS:
+1. EVERY response about data MUST include ```sql ... ``` block
+2. Put the SQL query FIRST, explanation AFTER
+3. NEVER respond with just text - always include the query
+4. NEVER say ""I will"", ""Let me"", ""Here's what I'll do"" without the actual SQL
+5. Start your SQL block immediately after acknowledging the request
+6. The word ""sql"" MUST appear after the opening triple backticks
+7. NEVER use placeholders like [value] - use real column/table names
+8. NEVER ask for clarification - just write the best query possible
+
+CORRECT FORMAT EXAMPLE:
+User: Show me all orders
+Assistant: Here are the orders:
+```sql
+SELECT * FROM ""Orders"" LIMIT 100
+```
+
+WRONG (DO NOT DO THIS):
+User: Show me all orders
+Assistant: I'll create a query to show all orders from the database...
 
 CRITICAL - Column naming:
 - Use double quotes for aliases: COUNT(*) AS ""Total Count""
@@ -273,6 +309,25 @@ CRITICAL - TABLE NAME CASE SENSITIVITY:
 - ALWAYS wrap table names in double quotes to preserve case: FROM ""Posts"" not FROM posts
 - Example: SELECT COUNT(*) FROM ""Videos"" (not FROM videos)
 - Example: SELECT * FROM ""Comments"" WHERE ""PostId"" = 1
+
+CRITICAL - DATA ORDERING FOR VISUALIZATION:
+Results will be displayed as charts (bar, pie, line). To make charts meaningful:
+- ALWAYS ORDER BY the main numeric/value column (the thing being measured), NOT by IDs or codes
+- For ""top X"" or ""highest/lowest"" queries: ORDER BY the value column DESC/ASC
+- For time-series data: ORDER BY date/time column
+- The FIRST column should be the label/category (name, title, category, date)
+- The SECOND+ columns should be the numeric values to visualize (amount, count, total, price, freight, etc.)
+
+Examples of CORRECT ordering:
+- ""Show top customers by sales"" → ORDER BY ""TotalSales"" DESC (NOT by customer_id)
+- ""Show orders by freight"" → ORDER BY ""Freight"" DESC (NOT by order_id or postal_code)
+- ""Show products by quantity"" → ORDER BY ""Quantity"" DESC (NOT by product_id)
+- ""Show monthly revenue"" → ORDER BY month/date ASC (for time series)
+
+Examples of WRONG ordering (DO NOT DO THIS):
+- ORDER BY ""PostalCode"" when showing freight data
+- ORDER BY ""Id"" when showing sales/amounts
+- No ORDER BY at all for aggregated data
 
 SQL Query rules:
 - ALWAYS use DISTINCT when there's any possibility of duplicate rows from JOINs
@@ -303,16 +358,24 @@ No database schema is available. You can help with general SQL questions or ask 
 
     private static string? ExtractSqlFromResponse(string response)
     {
-        // Try to extract SQL from markdown code blocks
-        var sqlStartMarkers = new[] { "```sql", "```SQL", "```" };
-        var endMarker = "```";
+        // Try to extract SQL from markdown code blocks - multiple patterns
+        var patterns = new[]
+        {
+            ("```sql", "```"),      // Standard SQL block
+            ("```SQL", "```"),      // Uppercase
+            ("```\nSELECT", "```"), // Generic block starting with SELECT
+            ("```\nWITH", "```"),   // Generic block starting with WITH
+        };
 
-        foreach (var startMarker in sqlStartMarkers)
+        foreach (var (startMarker, endMarker) in patterns)
         {
             var startIndex = response.IndexOf(startMarker, StringComparison.OrdinalIgnoreCase);
             if (startIndex >= 0)
             {
-                startIndex += startMarker.Length;
+                // Skip past the marker but keep SELECT/WITH if that's what we matched
+                var offset = startMarker.StartsWith("```\n") ? 4 : startMarker.Length; // Skip ``` and newline
+                startIndex += offset;
+
                 var endIndex = response.IndexOf(endMarker, startIndex, StringComparison.OrdinalIgnoreCase);
                 if (endIndex > startIndex)
                 {
@@ -322,6 +385,48 @@ No database schema is available. You can help with general SQL questions or ask 
                         return sql;
                     }
                 }
+            }
+        }
+
+        // Fallback: Try to find raw SELECT or WITH statements if no code block found
+        var lines = response.Split('\n');
+        var sqlLines = new List<string>();
+        var inSql = false;
+
+        foreach (var line in lines)
+        {
+            var trimmedLine = line.Trim();
+            var upperLine = trimmedLine.ToUpperInvariant();
+
+            // Start capturing when we see SELECT or WITH at the start of a line
+            if (!inSql && (upperLine.StartsWith("SELECT ") || upperLine.StartsWith("WITH ")))
+            {
+                inSql = true;
+            }
+
+            if (inSql)
+            {
+                // Stop if we hit an empty line or text that doesn't look like SQL
+                if (string.IsNullOrWhiteSpace(trimmedLine))
+                {
+                    break;
+                }
+                // Stop if line starts with common non-SQL patterns
+                if (trimmedLine.StartsWith("This ") || trimmedLine.StartsWith("The ") ||
+                    trimmedLine.StartsWith("I ") || trimmedLine.StartsWith("Here"))
+                {
+                    break;
+                }
+                sqlLines.Add(trimmedLine);
+            }
+        }
+
+        if (sqlLines.Count > 0)
+        {
+            var sql = string.Join("\n", sqlLines);
+            if (IsSafeQuery(sql))
+            {
+                return sql;
             }
         }
 
@@ -373,5 +478,142 @@ No database schema is available. You can help with general SQL questions or ask 
         }
 
         return string.IsNullOrEmpty(cleaned) ? "New Chat" : cleaned;
+    }
+
+    private static string BuildFileSystemPrompt(string? schemaContext, string? fileDataContext, string fileName)
+    {
+        var prompt = $@"You are Erao, a data analyst assistant helping with a file named '{fileName}'.
+
+RESPONSE FORMAT:
+When showing data results, include a JSON block for table/chart display:
+```json
+{{""columns"": [""Column1"", ""Column2""], ""rows"": [{{""Column1"": ""value"", ""Column2"": ""value""}}], ""rowCount"": 1}}
+```
+
+Keep your explanatory text brief - the data will be displayed as a visual table or chart automatically.
+
+CRITICAL - DATA ORDERING FOR VISUALIZATION:
+Results will be displayed as charts (bar, pie, line). To make charts meaningful:
+- ALWAYS sort/order by the main numeric/value column (the thing being measured), NOT by IDs or codes
+- For ""top X"" or ""highest/lowest"" queries: sort by the value column descending/ascending
+- For time-series data: sort by date/time
+- The FIRST column in your JSON should be the label/category (name, title, category, date)
+- The SECOND+ columns should be the numeric values to visualize (amount, count, total, price, etc.)
+
+Examples of CORRECT ordering in JSON rows:
+- ""Show top products by sales"" → rows sorted by sales value DESC, columns: [""ProductName"", ""Sales""]
+- ""Show employees by salary"" → rows sorted by salary DESC, columns: [""EmployeeName"", ""Salary""]
+- ""Show monthly data"" → rows sorted by month ASC, columns: [""Month"", ""Value""]
+
+Examples of WRONG ordering (DO NOT DO THIS):
+- Sorting by ID or code columns when showing amounts/values
+- Random order for aggregated/comparison data
+- Putting numeric columns first and labels second
+
+RULES:
+- For counts/totals: just state the number naturally
+- For data listings: use the JSON format above so it displays as a table/chart
+- Remember previous messages for context
+- Do NOT generate SQL - this is file data, not a database
+";
+
+        if (!string.IsNullOrEmpty(schemaContext))
+        {
+            prompt += $@"
+
+The file has the following structure (columns):
+{schemaContext}
+";
+        }
+
+        if (!string.IsNullOrEmpty(fileDataContext))
+        {
+            // Limit data context to avoid token limits (take first ~50 rows)
+            var dataPreview = TruncateDataContext(fileDataContext, 50);
+            prompt += $@"
+
+Here is the data from the file (first rows):
+{dataPreview}
+
+Use this data to answer the user's questions. Calculate statistics, find patterns, and provide insights as requested.";
+        }
+
+        return prompt;
+    }
+
+    private static string TruncateDataContext(string jsonData, int maxRows)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(jsonData);
+            var root = doc.RootElement;
+
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                var rows = new List<System.Text.Json.JsonElement>();
+                foreach (var item in root.EnumerateArray())
+                {
+                    if (rows.Count >= maxRows) break;
+                    rows.Add(item);
+                }
+
+                return System.Text.Json.JsonSerializer.Serialize(rows);
+            }
+        }
+        catch
+        {
+            // If parsing fails, just truncate the string
+            if (jsonData.Length > 10000)
+            {
+                return jsonData.Substring(0, 10000) + "... (truncated)";
+            }
+        }
+
+        return jsonData;
+    }
+
+    private static string? ExtractJsonBlock(string response)
+    {
+        try
+        {
+            var jsonStart = response.IndexOf("```json", StringComparison.OrdinalIgnoreCase);
+            if (jsonStart >= 0)
+            {
+                jsonStart += 7; // Skip "```json"
+                var jsonEnd = response.IndexOf("```", jsonStart, StringComparison.OrdinalIgnoreCase);
+                if (jsonEnd > jsonStart)
+                {
+                    var jsonStr = response.Substring(jsonStart, jsonEnd - jsonStart).Trim();
+                    // Validate it's proper JSON with expected structure
+                    using var doc = System.Text.Json.JsonDocument.Parse(jsonStr);
+                    var root = doc.RootElement;
+                    if (root.TryGetProperty("columns", out _) && root.TryGetProperty("rows", out _))
+                    {
+                        return jsonStr;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // JSON extraction failed
+        }
+        return null;
+    }
+
+    private static string StripCodeBlocks(string content)
+    {
+        // Remove JSON code blocks
+        content = System.Text.RegularExpressions.Regex.Replace(
+            content, @"```json[\s\S]*?```", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        // Remove SQL code blocks
+        content = System.Text.RegularExpressions.Regex.Replace(
+            content, @"```sql[\s\S]*?```", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        // Clean up extra whitespace
+        content = System.Text.RegularExpressions.Regex.Replace(content, @"\n{3,}", "\n\n");
+
+        return content.Trim();
     }
 }

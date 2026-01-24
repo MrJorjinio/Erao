@@ -11,6 +11,7 @@ public class UnitOfWork : IUnitOfWork
     private IConversationRepository? _conversations;
     private IMessageRepository? _messages;
     private IUsageLogRepository? _usageLogs;
+    private IFileDocumentRepository? _fileDocuments;
 
     public UnitOfWork(EraoDbContext context)
     {
@@ -22,6 +23,7 @@ public class UnitOfWork : IUnitOfWork
     public IConversationRepository Conversations => _conversations ??= new ConversationRepository(_context);
     public IMessageRepository Messages => _messages ??= new MessageRepository(_context);
     public IUsageLogRepository UsageLogs => _usageLogs ??= new UsageLogRepository(_context);
+    public IFileDocumentRepository FileDocuments => _fileDocuments ??= new FileDocumentRepository(_context);
 
     public async Task<int> SaveChangesAsync()
     {
