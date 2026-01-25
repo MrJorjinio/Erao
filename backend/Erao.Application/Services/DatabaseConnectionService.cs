@@ -149,32 +149,30 @@ public class DatabaseConnectionService : IDatabaseConnectionService
             throw new InvalidOperationException("Database connection not found");
         }
 
-        // Return cached schema if available and recent (less than 1 hour old)
-        if (!string.IsNullOrEmpty(connection.SchemaCache) && connection.UpdatedAt > DateTime.UtcNow.AddHours(-1))
-        {
-            return new SchemaResponse
-            {
-                Schema = connection.SchemaCache,
-                CachedAt = connection.UpdatedAt
-            };
-        }
-
         var host = _encryptionService.Decrypt(connection.EncryptedHost);
         var port = int.Parse(_encryptionService.Decrypt(connection.EncryptedPort));
         var database = _encryptionService.Decrypt(connection.EncryptedDatabaseName);
         var username = _encryptionService.Decrypt(connection.EncryptedUsername);
         var password = _encryptionService.Decrypt(connection.EncryptedPassword);
 
-        var schema = await _databaseQueryService.GetSchemaAsync(
+        // Get raw schema for backward compatibility
+        var rawSchema = await _databaseQueryService.GetSchemaAsync(
             connection.DatabaseType, host, port, database, username, password);
 
-        connection.SchemaCache = schema;
+        // Get structured schema
+        var tables = await _databaseQueryService.GetStructuredSchemaAsync(
+            connection.DatabaseType, host, port, database, username, password);
+
+        connection.SchemaCache = rawSchema;
         await _unitOfWork.DatabaseConnections.UpdateAsync(connection);
         await _unitOfWork.SaveChangesAsync();
 
         return new SchemaResponse
         {
-            Schema = schema,
+            DatabaseName = database,
+            DatabaseType = connection.DatabaseType.ToString(),
+            Tables = tables,
+            RawSchema = rawSchema,
             CachedAt = DateTime.UtcNow
         };
     }

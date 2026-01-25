@@ -121,13 +121,15 @@ public class ChatService : IChatService
         }
 
         // Build chat history from previous messages - include query results for context
+        // Use [DATA_CONTEXT] tags so AI understands this is reference info, not text to repeat
         var history = (conversation.Messages ?? Enumerable.Empty<Message>())
             .OrderBy(m => m.CreatedAt)
             .Select(m => {
                 var role = m.Role == MessageRole.User ? "user" : "assistant";
                 var content = m.Content;
 
-                // For assistant messages, append query results as natural language context
+                // For assistant messages, append query results as context for follow-up questions
+                // Format as hidden context that AI should reference but NOT repeat in responses
                 if (m.Role == MessageRole.Assistant && !string.IsNullOrEmpty(m.QueryResult))
                 {
                     try
@@ -137,21 +139,25 @@ public class ChatService : IChatService
                         if (root.TryGetProperty("rows", out var rows) && rows.GetArrayLength() > 0)
                         {
                             var rowCount = rows.GetArrayLength();
-                            if (rowCount == 1)
+                            if (rowCount <= 5)
                             {
-                                // Single row - format as "The result was: Column1=Value1, Column2=Value2"
-                                var row = rows[0];
-                                var values = new List<string>();
-                                foreach (var prop in row.EnumerateObject())
+                                // Small result set - include actual data for context
+                                var dataLines = new List<string>();
+                                foreach (var row in rows.EnumerateArray())
                                 {
-                                    values.Add($"{prop.Name}: {prop.Value}");
+                                    var vals = new List<string>();
+                                    foreach (var prop in row.EnumerateObject())
+                                    {
+                                        vals.Add($"{prop.Name}={prop.Value}");
+                                    }
+                                    dataLines.Add(string.Join(", ", vals));
                                 }
-                                content += $"\n\n(Query returned: {string.Join(", ", values)})";
+                                content += $"\n[DATA_CONTEXT: {rowCount} row(s): {string.Join(" | ", dataLines)}]";
                             }
                             else
                             {
-                                // Multiple rows - just note the count
-                                content += $"\n\n(Query returned {rowCount} rows of data)";
+                                // Large result set - just note the count
+                                content += $"\n[DATA_CONTEXT: Query returned {rowCount} rows]";
                             }
                         }
                     }
@@ -173,10 +179,6 @@ public class ChatService : IChatService
         // Get AI response with full conversation history
         var (aiResponse, tokensUsed) = await _ollamaService.ChatAsync(request.Message, history, systemPrompt);
 
-        // Log the AI response for debugging
-        Console.WriteLine($"[DEBUG] AI Response length: {aiResponse.Length}");
-        Console.WriteLine($"[DEBUG] AI Response: {aiResponse}");
-
         // Try to extract SQL from response (for database mode) or analyze file data
         string? sqlQuery = null;
         string? queryResult = null;
@@ -184,7 +186,6 @@ public class ChatService : IChatService
         if (dbConnection != null && request.ExecuteQuery)
         {
             sqlQuery = ExtractSqlFromResponse(aiResponse);
-            Console.WriteLine($"[DEBUG] Extracted SQL: {sqlQuery ?? "NULL"}");
 
             if (!string.IsNullOrEmpty(sqlQuery))
             {
@@ -204,11 +205,22 @@ public class ChatService : IChatService
                     queryResult = $"Error executing query: {ex.Message}";
                 }
             }
+            else
+            {
+                // Fallback: If AI returned [DATA_CONTEXT] without SQL, parse it as data
+                queryResult = ExtractDataContextAsResult(aiResponse);
+            }
         }
         else if (fileDocument != null)
         {
             // For file-based conversations, extract JSON data for table display
             queryResult = ExtractJsonBlock(aiResponse);
+
+            // Fallback: If no JSON block but has [DATA_CONTEXT], parse that
+            if (string.IsNullOrEmpty(queryResult))
+            {
+                queryResult = ExtractDataContextAsResult(aiResponse);
+            }
         }
 
         // Clean the response - remove code blocks that are now in queryResult
@@ -244,10 +256,12 @@ public class ChatService : IChatService
 
         await _unitOfWork.SaveChangesAsync();
 
+        var assistantDto = _mapper.Map<MessageDto>(assistantMessage);
+
         return new ChatResponse
         {
             UserMessage = _mapper.Map<MessageDto>(userMessage),
-            AssistantMessage = _mapper.Map<MessageDto>(assistantMessage),
+            AssistantMessage = assistantDto,
             QueryResult = queryResult,
             TokensUsed = tokensUsed
         };
@@ -265,9 +279,13 @@ You are Erao, an AI-powered database assistant. Help users query and understand 
 ## Conversation Context
 - Remember previous messages and resolve pronouns ("them", "it", "those")
 - Handle follow-ups naturally (e.g., "what are their sales?" refers to the previous entity)
+- [DATA_CONTEXT] tags show previous results - use them to understand context but NEVER output them
 
-## Response Format
-EVERY data response MUST include a SQL query in a code block.
+## CRITICAL Response Rules
+1. EVERY answer about data MUST include a ```sql code block - NO EXCEPTIONS
+2. Even for follow-up questions like "what about the second one?" - write a NEW SQL query
+3. NEVER just state data values without a SQL query - the UI needs the query to display results
+4. If user asks about previous results, write a query that fetches that specific data
 
 Structure:
 1. Brief acknowledgment (optional)
@@ -281,15 +299,23 @@ Assistant: Here are the orders:
 SELECT * FROM "Orders" LIMIT 100
 ```
 
-✗ Wrong:
-User: Show me all orders  
-Assistant: I'll create a query to show all orders...
+✓ Correct follow-up:
+User: What about the third highest spender?
+Assistant: Here's the third highest spender:
+```sql
+SELECT "CustomerName", SUM("Total") AS "TotalSpent" FROM "Orders" GROUP BY "CustomerName" ORDER BY "TotalSpent" DESC LIMIT 1 OFFSET 2
+```
+
+✗ Wrong (NO SQL = data won't display):
+User: What about the third one?
+Assistant: The third highest spender is John Smith with $50,000.
 
 Rules:
 - Start with SQL immediately—no "I will", "Let me", "Here's what I'll do"
 - Never use placeholders like [value]—use real column/table names
 - Never ask for clarification—write the best query possible
-- Don't state specific numbers—let the result card display them
+- NEVER output [DATA_CONTEXT], query results, row counts, or data values in your response
+- The UI automatically displays query results—just provide the SQL query
 
 ## SQL Syntax (PostgreSQL)
 - Case-sensitive: Use exact names from schema (PascalCase)
@@ -432,6 +458,73 @@ No database schema is available. You can help with general SQL questions or ask 
         return upperSql.StartsWith("SELECT") || upperSql.StartsWith("WITH");
     }
 
+    private static string? ExtractDataContextAsResult(string response)
+    {
+        // Parse [DATA_CONTEXT: N row(s): key=value, key=value | key=value, key=value]
+        var match = System.Text.RegularExpressions.Regex.Match(
+            response,
+            @"\[DATA_CONTEXT:\s*(\d+)\s*row\(s\):\s*(.+?)\]",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline
+        );
+
+        if (!match.Success) return null;
+
+        var rowsData = match.Groups[2].Value;
+        var rowStrings = rowsData.Split('|', StringSplitOptions.RemoveEmptyEntries);
+
+        var columns = new List<string>();
+        var rows = new List<Dictionary<string, object>>();
+
+        foreach (var rowStr in rowStrings)
+        {
+            var row = new Dictionary<string, object>();
+            var pairs = rowStr.Split(',', StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var pair in pairs)
+            {
+                var parts = pair.Split('=', 2);
+                if (parts.Length == 2)
+                {
+                    var key = parts[0].Trim();
+                    var value = parts[1].Trim();
+
+                    // Add column if not seen before
+                    if (!columns.Contains(key))
+                    {
+                        columns.Add(key);
+                    }
+
+                    // Try to parse as number
+                    if (double.TryParse(value, out var numValue))
+                    {
+                        row[key] = numValue;
+                    }
+                    else
+                    {
+                        row[key] = value;
+                    }
+                }
+            }
+
+            if (row.Count > 0)
+            {
+                rows.Add(row);
+            }
+        }
+
+        if (rows.Count == 0) return null;
+
+        // Build JSON result
+        var result = new
+        {
+            columns = columns,
+            rows = rows,
+            rowCount = rows.Count
+        };
+
+        return System.Text.Json.JsonSerializer.Serialize(result);
+    }
+
     private static string GenerateTitle(string message)
     {
         // Clean up the message and take first 50 characters
@@ -467,37 +560,39 @@ No database schema is available. You can help with general SQL questions or ask 
     {
         var prompt = $@"You are Erao, a data analyst assistant helping with a file named '{fileName}'.
 
+## CRITICAL Response Rules - READ CAREFULLY
+1. EVERY answer showing specific data MUST include a ```json code block - NO EXCEPTIONS
+2. Even for follow-up questions like ""what about the third one?"" - include a NEW JSON block with that data
+3. NEVER just state data values in plain text - the UI needs the JSON to display results visually
+4. If user asks about previous results, include a JSON block with that specific data
+5. [DATA_CONTEXT] tags show previous results - use them for context but NEVER output them
+
 RESPONSE FORMAT:
-When showing data results, include a JSON block for table/chart display:
 ```json
 {{""columns"": [""Column1"", ""Column2""], ""rows"": [{{""Column1"": ""value"", ""Column2"": ""value""}}], ""rowCount"": 1}}
 ```
 
-Keep your explanatory text brief - the data will be displayed as a visual table or chart automatically.
+Keep explanatory text brief - data displays as a visual card/table automatically.
 
-CRITICAL - DATA ORDERING FOR VISUALIZATION:
-Results will be displayed as charts (bar, pie, line). To make charts meaningful:
-- ALWAYS sort/order by the main numeric/value column (the thing being measured), NOT by IDs or codes
-- For ""top X"" or ""highest/lowest"" queries: sort by the value column descending/ascending
-- For time-series data: sort by date/time
-- The FIRST column in your JSON should be the label/category (name, title, category, date)
-- The SECOND+ columns should be the numeric values to visualize (amount, count, total, price, etc.)
+✓ Correct follow-up:
+User: ""What about the third highest?""
+Assistant: Here's the third highest spender:
+```json
+{{""columns"": [""Name"", ""Total""], ""rows"": [{{""Name"": ""John"", ""Total"": 5000}}], ""rowCount"": 1}}
+```
 
-Examples of CORRECT ordering in JSON rows:
-- ""Show top products by sales"" → rows sorted by sales value DESC, columns: [""ProductName"", ""Sales""]
-- ""Show employees by salary"" → rows sorted by salary DESC, columns: [""EmployeeName"", ""Salary""]
-- ""Show monthly data"" → rows sorted by month ASC, columns: [""Month"", ""Value""]
+✗ Wrong (NO JSON = data won't display):
+User: ""What about the third highest?""
+Assistant: The third highest spender is John with $5000.
 
-Examples of WRONG ordering (DO NOT DO THIS):
-- Sorting by ID or code columns when showing amounts/values
-- Random order for aggregated/comparison data
-- Putting numeric columns first and labels second
+## Data Ordering for Charts
+- FIRST column: label/category (name, title, date)
+- SECOND+ columns: numeric values (amount, count, total)
+- Sort by value column for ""top X"" queries, by date for time-series
 
-RULES:
-- For counts/totals: just state the number naturally
-- For data listings: use the JSON format above so it displays as a table/chart
+## Rules
+- Do NOT generate SQL - this is file data
 - Remember previous messages for context
-- Do NOT generate SQL - this is file data, not a database
 ";
 
         if (!string.IsNullOrEmpty(schemaContext))

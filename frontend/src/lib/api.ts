@@ -77,20 +77,56 @@ export interface UpdateDatabaseConnectionPayload {
   password?: string;
 }
 
-export interface SchemaInfo {
+export interface SchemaResponse {
+  databaseName: string;
+  databaseType: string;
   tables: TableSchema[];
+  rawSchema: string;
+  cachedAt: string | null;
 }
 
 export interface TableSchema {
   name: string;
+  schema: string | null;
   columns: ColumnSchema[];
+  primaryKeys: PrimaryKeyInfo[];
+  foreignKeys: ForeignKeyInfo[];
+  indexes: IndexInfo[];
+  rowCount: number | null;
 }
 
 export interface ColumnSchema {
   name: string;
   dataType: string;
   isNullable: boolean;
+  defaultValue: string | null;
   isPrimaryKey: boolean;
+  isForeignKey: boolean;
+  maxLength: number | null;
+  precision: number | null;
+  scale: number | null;
+  isIdentity: boolean;
+}
+
+export interface PrimaryKeyInfo {
+  name: string;
+  columns: string[];
+}
+
+export interface ForeignKeyInfo {
+  name: string;
+  column: string;
+  referencedTable: string;
+  referencedColumn: string;
+  onDelete: string | null;
+  onUpdate: string | null;
+}
+
+export interface IndexInfo {
+  name: string;
+  columns: string[];
+  isUnique: boolean;
+  isClustered: boolean;
 }
 
 // Conversation types
@@ -438,8 +474,8 @@ class ApiClient {
     });
   }
 
-  async getDatabaseSchema(id: string): Promise<ApiResponse<SchemaInfo>> {
-    return this.request<SchemaInfo>(`/api/databases/${id}/schema`);
+  async getDatabaseSchema(id: string): Promise<ApiResponse<SchemaResponse>> {
+    return this.request<SchemaResponse>(`/api/databases/${id}/schema`);
   }
 
   // ========== Conversation endpoints ==========

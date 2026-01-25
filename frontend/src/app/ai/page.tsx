@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, useCallback } from "react";
@@ -13,6 +13,8 @@ import {
   CreateDatabaseConnectionPayload,
   QueryResult,
   FileDocument,
+  SchemaResponse,
+  TableSchema,
 } from "@/lib/api";
 import { DataChart, ChartType, detectChartType } from "@/components/DataChart";
 import { DataViewerModal } from "@/components/DataViewerModal";
@@ -25,9 +27,12 @@ function stripCodeBlocks(content: string): string {
     .replace(/```json[\s\S]*?```/gi, "") // Remove JSON code blocks
     .replace(/```[\s\S]*?```/g, "") // Remove any other code blocks
     .replace(/\[Query Result:[\s\S]*$/gi, "") // Remove [Query Result: to end of string
+    .replace(/\[DATA_CONTEXT:[\s\S]*?\]/gi, "") // Remove [DATA_CONTEXT: ...] tags (including multiline)
+    .replace(/\[DATA_CONTEXT:[^\]]*$/gi, "") // Remove unclosed [DATA_CONTEXT: to end
     .replace(/[,{]?"?(columns|rows|rowCount|executionTimeMs)"?[\s\S]*$/gi, "") // Remove partial JSON results
     .replace(/\{"columns":\[[\s\S]*$/gi, "") // Remove JSON starting with columns
     .replace(/\n\|[^\n]*\|(\n\|[^\n]*\|)*/g, "") // Remove markdown tables
+    .replace(/\(Query returned[^)\n]*\)?/gi, "") // Remove "(Query returned...)" text
     .replace(/\n{3,}/g, "\n\n") // Clean up extra newlines
     .trim();
 }
@@ -200,6 +205,8 @@ export default function AIPage() {
   const [selectedDatabaseId, setSelectedDatabaseId] = useState<string | null>(null);
   const [showDatabaseModal, setShowDatabaseModal] = useState(false);
   const [showAddDatabaseModal, setShowAddDatabaseModal] = useState(false);
+  const [showSchemaModal, setShowSchemaModal] = useState(false);
+  const [schemaViewDatabaseId, setSchemaViewDatabaseId] = useState<string | null>(null);
 
   // File state
   const [files, setFiles] = useState<FileDocument[]>([]);
@@ -407,9 +414,9 @@ export default function AIPage() {
     switch (fileType) {
       case "Excel":
         return (
-          <svg className="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zM6 20V4h7v5h5v11H6z"/>
-            <path d="M8 12h3l1.5 2.5L14 12h3l-2.5 4L17 20h-3l-1.5-2.5L11 20H8l2.5-4L8 12z"/>
+          <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M14.17 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V7.83L14.17 2zM13 8V3.5L18.5 9H13V8zM6 20V4h5v6h7v10H6z"/>
+            <path d="M8.5 11L10.5 14L8.5 17H10L11.25 15L12.5 17H14L12 14L14 11H12.5L11.25 13L10 11H8.5z"/>
           </svg>
         );
       case "Word":
@@ -879,26 +886,52 @@ export default function AIPage() {
                       const parsedResult = parseQueryResult(message.queryResult);
                       if (!parsedResult || parsedResult.rows.length === 0) return null;
 
-                      // For single value results (1 row, 1-2 columns), show as highlighted text
-                      const isSingleValue = parsedResult.rows.length === 1 && parsedResult.columns.length <= 2;
-                      if (isSingleValue) {
+                      // For single row results, show as a clean card instead of a table
+                      if (parsedResult.rows.length === 1) {
                         const row = parsedResult.rows[0];
                         const values = parsedResult.columns.map((col) => ({
-                          label: col,
+                          label: col.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim(),
                           value: row[col],
                         }));
+
+                        // Find the "main" value (usually numeric, like total, count, amount)
+                        const mainValueIdx = values.findIndex(v =>
+                          typeof v.value === 'number' ||
+                          /total|count|sum|amount|price|spent/i.test(v.label)
+                        );
+                        const mainValue = mainValueIdx >= 0 ? values[mainValueIdx] : null;
+                        const otherValues = values.filter((_, idx) => idx !== mainValueIdx);
+
                         return (
-                          <div className="bg-[#f0fdf4] border border-green-200 rounded-xl p-4 mt-2">
-                            <div className="flex flex-wrap gap-4">
-                              {values.map((item, idx) => (
-                                <div key={idx} className="flex flex-col">
-                                  <span className="text-xs text-gray-500">{item.label}</span>
-                                  <span className="text-lg font-semibold text-gray-900">
-                                    {typeof item.value === "number" ? item.value.toLocaleString() : String(item.value)}
-                                  </span>
+                          <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-5 mt-2">
+                            {/* Main value highlight */}
+                            {mainValue && (
+                              <div className="mb-4">
+                                <span className="text-xs font-medium text-emerald-600 uppercase tracking-wide">
+                                  {mainValue.label}
+                                </span>
+                                <div className="text-3xl font-bold text-gray-900 mt-1">
+                                  {typeof mainValue.value === "number"
+                                    ? mainValue.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                    : String(mainValue.value)}
                                 </div>
-                              ))}
-                            </div>
+                              </div>
+                            )}
+                            {/* Other values */}
+                            {otherValues.length > 0 && (
+                              <div className={`grid gap-3 ${otherValues.length > 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                                {otherValues.map((item, idx) => (
+                                  <div key={idx} className="bg-white/60 rounded-lg px-3 py-2">
+                                    <span className="text-xs text-gray-500 capitalize">{item.label}</span>
+                                    <div className="text-sm font-semibold text-gray-800 mt-0.5">
+                                      {typeof item.value === "number"
+                                        ? item.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                                        : String(item.value)}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       }
@@ -1144,6 +1177,23 @@ export default function AIPage() {
             setShowDatabaseModal(false);
             setShowAddDatabaseModal(true);
           }}
+          onViewSchema={(id) => {
+            setSchemaViewDatabaseId(id);
+            setShowSchemaModal(true);
+            setShowDatabaseModal(false);
+          }}
+        />
+      )}
+
+      {/* Schema Viewer Modal */}
+      {showSchemaModal && schemaViewDatabaseId && (
+        <SchemaViewerModal
+          databaseId={schemaViewDatabaseId}
+          databaseName={databases.find(d => d.id === schemaViewDatabaseId)?.name || "Database"}
+          onClose={() => {
+            setShowSchemaModal(false);
+            setSchemaViewDatabaseId(null);
+          }}
         />
       )}
 
@@ -1212,12 +1262,14 @@ function DatabaseModal({
   onSelect,
   onClose,
   onAddNew,
+  onViewSchema,
 }: {
   databases: DatabaseConnection[];
   selectedDatabaseId: string | null;
   onSelect: (id: string) => void;
   onClose: () => void;
   onAddNew: () => void;
+  onViewSchema: (id: string) => void;
 }) {
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -1230,39 +1282,59 @@ function DatabaseModal({
             </p>
           ) : (
             databases.map((db) => (
-              <button
+              <div
                 key={db.id}
-                onClick={() => onSelect(db.id)}
-                className={`w-full text-left p-3 rounded-xl flex items-center justify-between transition-colors ${
+                className={`p-3 rounded-xl transition-colors ${
                   db.id === selectedDatabaseId
                     ? "bg-black text-white"
                     : "bg-[#f5f5f5] hover:bg-gray-200"
                 }`}
               >
-                <div>
-                  <p className="font-medium text-sm">{db.name}</p>
-                  <p
-                    className={`text-xs ${
-                      db.id === selectedDatabaseId
-                        ? "text-gray-300"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {db.databaseType}
-                  </p>
-                </div>
-                {db.isActive && (
-                  <span
-                    className={`text-xs ${
-                      db.id === selectedDatabaseId
-                        ? "text-green-300"
-                        : "text-green-600"
-                    }`}
-                  >
-                    Active
-                  </span>
-                )}
-              </button>
+                <button
+                  onClick={() => onSelect(db.id)}
+                  className="w-full text-left flex items-center justify-between"
+                >
+                  <div>
+                    <p className="font-medium text-sm">{db.name}</p>
+                    <p
+                      className={`text-xs ${
+                        db.id === selectedDatabaseId
+                          ? "text-gray-300"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      {db.databaseType}
+                    </p>
+                  </div>
+                  {db.isActive && (
+                    <span
+                      className={`text-xs ${
+                        db.id === selectedDatabaseId
+                          ? "text-green-300"
+                          : "text-green-600"
+                      }`}
+                    >
+                      Active
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onViewSchema(db.id);
+                  }}
+                  className={`mt-2 w-full text-xs py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors ${
+                    db.id === selectedDatabaseId
+                      ? "bg-white/20 hover:bg-white/30 text-white"
+                      : "bg-white hover:bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                  </svg>
+                  View Schema
+                </button>
+              </div>
             ))
           )}
         </div>
@@ -1293,18 +1365,55 @@ function AddDatabaseModal({
   onClose: () => void;
   onSuccess: (db: DatabaseConnection) => void;
 }) {
-  // Database type mapping: 0=PostgreSQL, 1=MySQL, 2=SQLServer, 3=MongoDB
+  // Database type mapping with icons
   const databaseTypes = [
-    { value: 0, label: "PostgreSQL", port: 5432 },
-    { value: 1, label: "MySQL", port: 3306 },
-    { value: 2, label: "SQL Server", port: 1433 },
-    { value: 3, label: "MongoDB", port: 27017 },
+    {
+      value: 0,
+      label: "PostgreSQL",
+      port: 5432,
+      placeholder: "db.example.com",
+      color: "#336791",
+      description: "Advanced open-source relational database"
+    },
+    {
+      value: 1,
+      label: "MySQL",
+      port: 3306,
+      placeholder: "mysql.example.com",
+      color: "#00758F",
+      description: "Popular open-source database"
+    },
+    {
+      value: 2,
+      label: "SQL Server",
+      port: 1433,
+      placeholder: "sqlserver.example.com",
+      color: "#CC2927",
+      description: "Microsoft enterprise database"
+    },
+    {
+      value: 3,
+      label: "MongoDB",
+      port: 27017,
+      placeholder: "mongo.example.com",
+      color: "#47A248",
+      description: "NoSQL document database"
+    },
   ];
+
+  // Database logo paths
+  const databaseLogos: Record<number, string> = {
+    0: "/db-logos/postgresql.png",
+    1: "/db-logos/mysql.png",
+    2: "/db-logos/sql-server.png",
+    3: "/db-logos/mongodb.png",
+  };
+
 
   const [formData, setFormData] = useState<CreateDatabaseConnectionPayload>({
     name: "",
-    databaseType: 0, // PostgreSQL
-    host: "localhost",
+    databaseType: 0,
+    host: "",
     port: 5432,
     databaseName: "",
     username: "",
@@ -1314,7 +1423,10 @@ function AddDatabaseModal({
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [error, setError] = useState("");
-  const [testResult, setTestResult] = useState<boolean | null>(null);
+  const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
+  const [testPassed, setTestPassed] = useState(false);
+
+  const currentDbType = databaseTypes.find(t => t.value === formData.databaseType);
 
   const handlePortChange = (value: string) => {
     setPortInput(value);
@@ -1322,211 +1434,292 @@ function AddDatabaseModal({
     if (!isNaN(parsed)) {
       setFormData({ ...formData, port: parsed });
     }
+    setTestPassed(false);
+    setTestResult(null);
   };
 
-  const handleDatabaseTypeChange = (value: string) => {
-    const typeValue = parseInt(value, 10);
+  const handleDatabaseTypeSelect = (typeValue: number) => {
     const dbType = databaseTypes.find((t) => t.value === typeValue);
     if (dbType) {
       setFormData({ ...formData, databaseType: typeValue, port: dbType.port });
       setPortInput(dbType.port.toString());
     }
+    setTestPassed(false);
+    setTestResult(null);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setIsLoading(true);
-
-    try {
-      const response = await api.createDatabase(formData);
-      if (response.success) {
-        onSuccess(response.data);
-      }
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-      } else {
-        setError("Failed to create database connection");
-      }
-    } finally {
-      setIsLoading(false);
-    }
+  const handleFieldChange = (field: string, value: string) => {
+    setFormData({ ...formData, [field]: value });
+    setTestPassed(false);
+    setTestResult(null);
   };
 
   const handleTest = async () => {
     setIsTesting(true);
     setTestResult(null);
     setError("");
+    setTestPassed(false);
 
     try {
-      // First create, then test
       const createResponse = await api.createDatabase(formData);
       if (createResponse.success) {
         const testResponse = await api.testDatabase(createResponse.data.id);
-        setTestResult(testResponse.data);
         if (testResponse.data) {
-          onSuccess(createResponse.data);
+          setTestResult("success");
+          setTestPassed(true);
+          setFormData(prev => ({ ...prev, id: createResponse.data.id } as typeof prev & { id: string }));
         } else {
-          // Delete if test failed
           await api.deleteDatabase(createResponse.data.id);
-          setError("Connection test failed. Please check your credentials.");
+          setTestResult("error");
+          setError("Could not connect. Please verify your credentials and try again.");
         }
       }
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
-        setError("Failed to test connection");
+        setError("Connection test failed");
       }
-      setTestResult(false);
+      setTestResult("error");
     } finally {
       setIsTesting(false);
     }
   };
 
+  const handleSave = async () => {
+    if (!testPassed) return;
+    setIsLoading(true);
+
+    try {
+      const response = await api.getDatabases();
+      if (response.success) {
+        const newDb = response.data.find(db => db.name === formData.name);
+        if (newDb) {
+          onSuccess(newDb);
+        } else {
+          const lastDb = response.data[response.data.length - 1];
+          if (lastDb) {
+            onSuccess(lastDb);
+          }
+        }
+      }
+    } catch {
+      setError("Failed to save connection");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-4">Add Database Connection</h2>
-
-        {error && (
-          <div className="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg mb-4">
-            {error}
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Connect Database</h2>
+            <p className="text-sm text-gray-500 mt-0.5">Add a new database connection to start querying</p>
           </div>
-        )}
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Connection Name</label>
-            <input
-              type="text"
-              value={formData.name}
-              onChange={(e) =>
-                setFormData({ ...formData, name: e.target.value })
-              }
-              placeholder="e.g., Production DB"
-              required
-              className="h-10 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Database Type</label>
-            <select
-              value={formData.databaseType}
-              onChange={(e) => handleDatabaseTypeChange(e.target.value)}
-              className="h-10 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none"
-            >
+        <div className="px-6 py-5">
+          {/* Database Type Selection */}
+          <div className="mb-6">
+            <label className="text-sm font-medium text-gray-700 mb-3 block">Select Database Type</label>
+            <div className="grid grid-cols-4 gap-3">
               {databaseTypes.map((type) => (
-                <option key={type.value} value={type.value}>
-                  {type.label}
-                </option>
+                <button
+                  key={type.value}
+                  type="button"
+                  onClick={() => handleDatabaseTypeSelect(type.value)}
+                  className={`relative flex flex-col items-center p-4 rounded-xl border-2 transition-all ${
+                    formData.databaseType === type.value
+                      ? "border-gray-900 bg-gray-50 shadow-sm"
+                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  }`}
+                >
+                  {formData.databaseType === type.value && (
+                    <div className="absolute top-2 right-2 w-4 h-4 bg-gray-900 rounded-full flex items-center justify-center">
+                      <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                  )}
+                  <div className="mb-2">
+                    <img src={databaseLogos[type.value]} alt={type.label} className="w-9 h-9 object-contain" />
+                  </div>
+                  <span className="text-xs font-medium text-gray-700">{type.label}</span>
+                </button>
               ))}
-            </select>
+            </div>
+            {currentDbType && (
+              <p className="text-xs text-gray-500 mt-2 text-center">{currentDbType.description}</p>
+            )}
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2 flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Host</label>
+          {/* Connection Details */}
+          <div className="space-y-4">
+            {/* Connection Name */}
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1.5 block">Connection Name</label>
               <input
                 type="text"
-                value={formData.host}
-                onChange={(e) =>
-                  setFormData({ ...formData, host: e.target.value })
-                }
-                placeholder="localhost"
-                required
-                className="h-10 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none"
+                value={formData.name}
+                onChange={(e) => handleFieldChange("name", e.target.value)}
+                placeholder="My Production Database"
+                className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium">Port</label>
+
+            {/* Host & Port */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-2">
+                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Host</label>
+                <input
+                  type="text"
+                  value={formData.host}
+                  onChange={(e) => handleFieldChange("host", e.target.value)}
+                  placeholder={currentDbType?.placeholder || "db.example.com"}
+                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Port</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={portInput}
+                  onChange={(e) => handlePortChange(e.target.value)}
+                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                />
+              </div>
+            </div>
+
+            {/* Database Name */}
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1.5 block">Database Name</label>
               <input
                 type="text"
-                inputMode="numeric"
-                value={portInput}
-                onChange={(e) => handlePortChange(e.target.value)}
-                required
-                className="h-10 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none"
+                value={formData.databaseName}
+                onChange={(e) => handleFieldChange("databaseName", e.target.value)}
+                placeholder="production_db"
+                className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
               />
+            </div>
+
+            {/* Credentials */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Username</label>
+                <input
+                  type="text"
+                  value={formData.username}
+                  onChange={(e) => handleFieldChange("username", e.target.value)}
+                  placeholder="admin"
+                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Password</label>
+                <input
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) => handleFieldChange("password", e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                />
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Database Name</label>
-            <input
-              type="text"
-              value={formData.databaseName}
-              onChange={(e) =>
-                setFormData({ ...formData, databaseName: e.target.value })
-              }
-              placeholder="mydb"
-              required
-              className="h-10 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Username</label>
-            <input
-              type="text"
-              value={formData.username}
-              onChange={(e) =>
-                setFormData({ ...formData, username: e.target.value })
-              }
-              placeholder="postgres"
-              required
-              className="h-10 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium">Password</label>
-            <input
-              type="password"
-              value={formData.password}
-              onChange={(e) =>
-                setFormData({ ...formData, password: e.target.value })
-              }
-              placeholder="Enter password"
-              required
-              className="h-10 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none"
-            />
-          </div>
-
-          {testResult !== null && (
-            <div
-              className={`text-sm px-4 py-2 rounded-lg ${
-                testResult
-                  ? "bg-green-50 text-green-600"
-                  : "bg-red-50 text-red-600"
-              }`}
-            >
-              {testResult
-                ? "Connection successful!"
-                : "Connection failed. Please check your credentials."}
+          {/* Feedback */}
+          {(testResult || error) && (
+            <div className={`mt-5 p-4 rounded-xl flex items-center gap-3 ${
+              testResult === "success"
+                ? "bg-green-50 border border-green-200"
+                : "bg-red-50 border border-red-200"
+            }`}>
+              {testResult === "success" ? (
+                <>
+                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-green-800">Connection successful!</p>
+                    <p className="text-xs text-green-600">Ready to connect to your {currentDbType?.label} database</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-red-800">Connection failed</p>
+                    <p className="text-xs text-red-600">{error || "Please check your credentials"}</p>
+                  </div>
+                </>
+              )}
             </div>
           )}
+        </div>
 
-          <div className="flex gap-3 mt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 h-10 bg-[#f5f5f5] text-black rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleTest}
-              disabled={isTesting || isLoading}
-              className="flex-1 h-10 bg-gray-800 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50"
-            >
-              {isTesting ? "Testing..." : "Test & Save"}
-            </button>
-          </div>
-        </form>
+        {/* Footer */}
+        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-2xl flex gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 h-11 text-gray-600 text-sm font-medium hover:text-gray-800 transition-colors"
+          >
+            Cancel
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={handleTest}
+            disabled={isTesting || !formData.host || !formData.databaseName || !formData.username || !formData.name}
+            className="px-6 h-11 bg-white border border-gray-300 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            {isTesting ? (
+              <>
+                <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                Testing...
+              </>
+            ) : (
+              "Test Connection"
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!testPassed || isLoading}
+            className={`px-6 h-11 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+              testPassed
+                ? "bg-gray-900 text-white hover:bg-gray-800"
+                : "bg-gray-200 text-gray-400 cursor-not-allowed"
+            }`}
+          >
+            {isLoading ? (
+              <>
+                <div className="w-4 h-4 border-2 border-gray-400 border-t-white rounded-full animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save Connection"
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1667,6 +1860,752 @@ function FilesModal({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Schema Viewer Modal Component
+function SchemaViewerModal({
+  databaseId,
+  databaseName,
+  onClose,
+}: {
+  databaseId: string;
+  databaseName: string;
+  onClose: () => void;
+}) {
+  const [schema, setSchema] = useState<SchemaResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "diagram">("diagram");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const fetchSchema = async () => {
+      try {
+        setLoading(true);
+        const response = await api.getDatabaseSchema(databaseId);
+        if (response.success && response.data) {
+          setSchema(response.data);
+          // Auto-expand first 3 tables
+          const tables = response.data.tables || [];
+          const firstTables = tables.slice(0, 3).map(t => t.name);
+          setExpandedTables(new Set(firstTables));
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load schema");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSchema();
+  }, [databaseId]);
+
+  const toggleTable = (tableName: string) => {
+    setExpandedTables(prev => {
+      const next = new Set(prev);
+      if (next.has(tableName)) {
+        next.delete(tableName);
+      } else {
+        next.add(tableName);
+      }
+      return next;
+    });
+  };
+
+  const filteredTables = (schema?.tables || []).filter(table =>
+    table.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    table.columns.some(col => col.name.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
+  return (
+    <div className={`fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${isFullscreen ? 'p-0' : 'p-4'}`}>
+      <div className={`bg-white flex flex-col transition-all duration-300 ${
+        isFullscreen
+          ? 'w-full h-full rounded-none'
+          : 'rounded-2xl w-full max-w-6xl max-h-[90vh]'
+      }`}>
+        {/* Header */}
+        <div className={`border-b border-gray-100 ${isFullscreen ? 'p-4' : 'p-6'}`}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold">{databaseName}</h2>
+              {schema && (
+                <p className="text-sm text-gray-500">
+                  {schema.databaseType} • {(schema.tables || []).length} tables
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              {/* View Mode Toggle */}
+              <div className="flex bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode("diagram")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "diagram" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  Diagram
+                </button>
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    viewMode === "list" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  List
+                </button>
+              </div>
+              {/* Fullscreen Toggle */}
+              <button
+                onClick={() => setIsFullscreen(!isFullscreen)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+                title={isFullscreen ? "Exit fullscreen" : "Open sandbox mode"}
+              >
+                {isFullscreen ? (
+                  <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                  </svg>
+                )}
+              </button>
+              <button
+                onClick={onClose}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          {viewMode === "list" && (
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search tables and columns..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full h-10 bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 text-sm outline-none focus:border-gray-400 focus:bg-white transition-all"
+              />
+              <svg className="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className={`flex-1 ${viewMode === "diagram" ? "overflow-hidden" : "overflow-y-auto custom-scrollbar"}`}>
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="w-8 h-8 border-2 border-gray-200 border-t-gray-800 rounded-full animate-spin" />
+            </div>
+          ) : error ? (
+            <div className="text-center py-12">
+              <p className="text-red-500">{error}</p>
+            </div>
+          ) : (schema?.tables || []).length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              No tables found
+            </div>
+          ) : viewMode === "diagram" ? (
+            <ERDiagramView tables={schema?.tables || []} />
+          ) : (
+            <div className="p-6">
+              {filteredTables.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  No tables match your search
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredTables.map((table) => (
+                    <TableCard
+                      key={table.name}
+                      table={table}
+                      isExpanded={expandedTables.has(table.name)}
+                      onToggle={() => toggleTable(table.name)}
+                      searchQuery={searchQuery}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ERD Diagram View Component
+function ERDiagramView({ tables }: { tables: TableSchema[] }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(0.8);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+  // Initialize table positions in a grid layout
+  useEffect(() => {
+    const cols = Math.ceil(Math.sqrt(tables.length));
+    const initialPositions: Record<string, { x: number; y: number }> = {};
+    tables.forEach((table, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      initialPositions[table.name] = {
+        x: 80 + col * 300,
+        y: 80 + row * 280,
+      };
+    });
+    setPositions(initialPositions);
+    // Auto-fit scale based on table count
+    if (tables.length > 10) {
+      setScale(0.6);
+    } else if (tables.length > 5) {
+      setScale(0.75);
+    } else {
+      setScale(0.9);
+    }
+  }, [tables]);
+
+  // Build FK relationships
+  const relationships = tables.flatMap(table =>
+    table.foreignKeys.map(fk => ({
+      fromTable: table.name,
+      fromColumn: fk.column,
+      toTable: fk.referencedTable,
+      toColumn: fk.referencedColumn,
+    }))
+  );
+
+  const handleMouseDown = (tableName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rect = (e.target as HTMLElement).closest('.erd-table')?.getBoundingClientRect();
+    if (rect) {
+      setDragging(tableName);
+      setDragOffset({
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+    }
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // Only pan if clicking on the canvas background (not on a table)
+    if ((e.target as HTMLElement).closest('.erd-table')) return;
+    setIsPanning(true);
+    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (dragging && containerRef.current) {
+      const containerRect = containerRef.current.getBoundingClientRect();
+      setPositions(prev => ({
+        ...prev,
+        [dragging]: {
+          x: (e.clientX - containerRect.left - dragOffset.x - pan.x) / scale,
+          y: (e.clientY - containerRect.top - dragOffset.y - pan.y) / scale,
+        },
+      }));
+    } else if (isPanning) {
+      setPan({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y,
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setDragging(null);
+    setIsPanning(false);
+  };
+
+  // Handle wheel/touchpad events
+  const handleWheel = (e: React.WheelEvent) => {
+    // Pinch-to-zoom (ctrlKey is true for pinch gestures on touchpad)
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Slower zoom speed for smoother touchpad experience
+      const zoomSpeed = 0.008;
+      const delta = -e.deltaY * zoomSpeed;
+      const newScale = Math.min(Math.max(scale + delta, 0.3), 2);
+      const scaleChange = newScale / scale;
+
+      // Zoom towards mouse position
+      setPan(prev => ({
+        x: mouseX - (mouseX - prev.x) * scaleChange,
+        y: mouseY - (mouseY - prev.y) * scaleChange,
+      }));
+      setScale(newScale);
+    } else {
+      // Regular two-finger scroll = pan
+      e.preventDefault();
+      setPan(prev => ({
+        x: prev.x - e.deltaX,
+        y: prev.y - e.deltaY,
+      }));
+    }
+  };
+
+  // Zoom towards center
+  const zoomIn = () => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    const newScale = Math.min(scale + 0.1, 2);
+    const scaleChange = newScale / scale;
+
+    setPan(prev => ({
+      x: centerX - (centerX - prev.x) * scaleChange,
+      y: centerY - (centerY - prev.y) * scaleChange,
+    }));
+    setScale(newScale);
+  };
+
+  const zoomOut = () => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    const newScale = Math.max(scale - 0.1, 0.3);
+    const scaleChange = newScale / scale;
+
+    setPan(prev => ({
+      x: centerX - (centerX - prev.x) * scaleChange,
+      y: centerY - (centerY - prev.y) * scaleChange,
+    }));
+    setScale(newScale);
+  };
+
+  const getColumnYOffset = (table: TableSchema, columnName: string) => {
+    const headerHeight = 36;
+    const columnHeight = 28;
+    const colIndex = table.columns.findIndex(c => c.name === columnName);
+    return headerHeight + (colIndex + 0.5) * columnHeight;
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className={`relative w-full h-full overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 ${
+        isPanning ? 'cursor-grabbing' : dragging ? 'cursor-grabbing' : 'cursor-grab'
+      }`}
+      onMouseDown={handleCanvasMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onWheel={handleWheel}
+      style={{ minHeight: "500px" }}
+    >
+      {/* Grid pattern background */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-30"
+        style={{
+          backgroundImage: `radial-gradient(circle, #cbd5e1 1px, transparent 1px)`,
+          backgroundSize: `${20 * scale}px ${20 * scale}px`,
+          backgroundPosition: `${pan.x}px ${pan.y}px`,
+        }}
+      />
+
+      {/* Zoom Controls */}
+      <div className="absolute top-4 right-4 z-10 flex gap-2 bg-white/80 backdrop-blur-sm rounded-xl p-2 shadow-lg border border-gray-200">
+        <button
+          onClick={zoomIn}
+          className="w-8 h-8 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors"
+          title="Zoom in"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
+        <button
+          onClick={zoomOut}
+          className="w-8 h-8 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors"
+          title="Zoom out"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+          </svg>
+        </button>
+        <div className="w-px bg-gray-200" />
+        <span className="flex items-center px-2 text-xs text-gray-500 font-medium min-w-[50px] justify-center">
+          {Math.round(scale * 100)}%
+        </span>
+        <div className="w-px bg-gray-200" />
+        <button
+          onClick={() => { setScale(0.8); setPan({ x: 0, y: 0 }); }}
+          className="px-3 h-8 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-center hover:bg-gray-50 text-xs font-medium transition-colors"
+          title="Reset view"
+        >
+          Fit
+        </button>
+      </div>
+
+      {/* Instructions hint */}
+      <div className="absolute top-4 left-4 z-10 text-xs text-gray-500 bg-white/80 backdrop-blur-sm rounded-lg px-3 py-2 shadow-sm border border-gray-200">
+        <span className="font-medium">Tip:</span> Drag tables to arrange • Scroll to pan • Pinch to zoom
+      </div>
+
+      {/* Canvas */}
+      <div
+        className="absolute"
+        style={{
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+          transformOrigin: "0 0",
+          left: 0,
+          top: 0,
+          width: "6000px",
+          height: "4000px",
+        }}
+      >
+        {/* SVG for relationship lines */}
+        <svg
+          className="absolute pointer-events-none"
+          style={{
+            left: "-1000px",
+            top: "-1000px",
+            width: "8000px",
+            height: "6000px",
+            overflow: "visible"
+          }}
+        >
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="10"
+              markerHeight="7"
+              refX="9"
+              refY="3.5"
+              orient="auto"
+            >
+              <polygon points="0 0, 10 3.5, 0 7" fill="#6366f1" />
+            </marker>
+          </defs>
+          {relationships.map((rel, idx) => {
+            const fromPos = positions[rel.fromTable];
+            const toPos = positions[rel.toTable];
+            const fromTable = tables.find(t => t.name === rel.fromTable);
+            const toTable = tables.find(t => t.name === rel.toTable);
+
+            if (!fromPos || !toPos || !fromTable || !toTable) return null;
+
+            // SVG offset compensation
+            const svgOffset = 1000;
+            const tableWidth = 240;
+            const fromY = fromPos.y + getColumnYOffset(fromTable, rel.fromColumn) + svgOffset;
+            const toY = toPos.y + getColumnYOffset(toTable, rel.toColumn) + svgOffset;
+
+            // Determine which side to connect from
+            const fromRight = fromPos.x + tableWidth + svgOffset;
+            const fromLeft = fromPos.x + svgOffset;
+            const toLeft = toPos.x + svgOffset;
+            const toRight = toPos.x + tableWidth + svgOffset;
+
+            let startX: number, endX: number;
+            if (fromRight < toLeft) {
+              // from is to the left of to
+              startX = fromRight;
+              endX = toLeft;
+            } else if (fromLeft > toRight) {
+              // from is to the right of to
+              startX = fromLeft;
+              endX = toRight;
+            } else {
+              // overlapping horizontally, use right side
+              startX = fromRight;
+              endX = toRight;
+            }
+
+            const midX = (startX + endX) / 2;
+            const path = `M ${startX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${endX} ${toY}`;
+
+            return (
+              <g key={idx}>
+                <path
+                  d={path}
+                  fill="none"
+                  stroke="#6366f1"
+                  strokeWidth="2"
+                  markerEnd="url(#arrowhead)"
+                  className="opacity-60"
+                />
+                {/* FK indicator dot */}
+                <circle cx={startX} cy={fromY} r="4" fill="#6366f1" />
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Table Cards */}
+        {tables.map(table => {
+          const pos = positions[table.name] || { x: 0, y: 0 };
+          const pkColumns = new Set(table.primaryKeys.flatMap(pk => pk.columns));
+          const fkColumns = new Set(table.foreignKeys.map(fk => fk.column));
+
+          return (
+            <div
+              key={table.name}
+              className="erd-table absolute bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden select-none"
+              style={{
+                left: pos.x,
+                top: pos.y,
+                width: 240,
+                cursor: dragging === table.name ? "grabbing" : "grab",
+              }}
+              onMouseDown={(e) => handleMouseDown(table.name, e)}
+            >
+              {/* Table Header */}
+              <div className="bg-gray-900 text-white px-3 py-2 flex items-center gap-2">
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <span className="font-medium text-sm truncate">{table.name}</span>
+                {table.rowCount !== null && (
+                  <span className="ml-auto text-xs text-gray-400">{table.rowCount.toLocaleString()}</span>
+                )}
+              </div>
+              {/* Columns */}
+              <div
+                className="divide-y divide-gray-100 max-h-48 overflow-y-auto erd-scrollbar"
+                onWheel={(e) => e.stopPropagation()}
+              >
+                {table.columns.map(column => (
+                  <div
+                    key={column.name}
+                    className="px-3 py-1.5 flex items-center gap-2 text-xs hover:bg-gray-50"
+                  >
+                    <div className="w-4 flex justify-center">
+                      {pkColumns.has(column.name) ? (
+                        <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
+                        </svg>
+                      ) : fkColumns.has(column.name) ? (
+                        <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                      ) : (
+                        <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                      )}
+                    </div>
+                    <span className="font-medium text-gray-700 truncate flex-1">{column.name}</span>
+                    <span className="text-gray-400 font-mono text-[10px]">{column.dataType}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm border border-gray-200 px-3 py-2">
+        <div className="flex gap-4 text-xs">
+          <div className="flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
+            </svg>
+            <span className="text-gray-600">Primary Key</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+            </svg>
+            <span className="text-gray-600">Foreign Key</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="w-6 h-0.5 bg-indigo-500 rounded" />
+            <span className="text-gray-600">Relationship</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Table Card Component for Schema Viewer
+function TableCard({
+  table,
+  isExpanded,
+  onToggle,
+  searchQuery,
+}: {
+  table: TableSchema;
+  isExpanded: boolean;
+  onToggle: () => void;
+  searchQuery: string;
+}) {
+  const pkColumns = new Set(table.primaryKeys.flatMap(pk => pk.columns));
+  const fkColumns = new Set(table.foreignKeys.map(fk => fk.column));
+
+  const highlightMatch = (text: string) => {
+    if (!searchQuery) return text;
+    const regex = new RegExp(`(${searchQuery})`, 'gi');
+    const parts = text.split(regex);
+    return parts.map((part, i) =>
+      regex.test(part) ? <mark key={i} className="bg-yellow-200 rounded px-0.5">{part}</mark> : part
+    );
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+      {/* Table Header */}
+      <button
+        onClick={onToggle}
+        className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <svg
+            className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <span className="font-medium text-sm">{highlightMatch(table.name)}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-gray-500">
+          <span>{table.columns.length} columns</span>
+          {table.rowCount !== null && (
+            <span>{table.rowCount.toLocaleString()} rows</span>
+          )}
+          {table.primaryKeys.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">
+              {table.primaryKeys.length} PK
+            </span>
+          )}
+          {table.foreignKeys.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">
+              {table.foreignKeys.length} FK
+            </span>
+          )}
+          {table.indexes.length > 0 && (
+            <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">
+              {table.indexes.length} IDX
+            </span>
+          )}
+        </div>
+      </button>
+
+      {/* Table Content */}
+      {isExpanded && (
+        <div className="border-t border-gray-200">
+          {/* Columns */}
+          <div className="divide-y divide-gray-100">
+            {table.columns.map((column) => (
+              <div
+                key={column.name}
+                className="px-4 py-2.5 flex items-center justify-between hover:bg-gray-50"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-5 flex justify-center">
+                    {pkColumns.has(column.name) ? (
+                      <svg className="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
+                      </svg>
+                    ) : fkColumns.has(column.name) ? (
+                      <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                    ) : (
+                      <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                    )}
+                  </div>
+                  <span className="text-sm font-medium">{highlightMatch(column.name)}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-0.5 rounded">
+                    {column.dataType}
+                    {column.maxLength && `(${column.maxLength})`}
+                  </span>
+                  {column.isIdentity && (
+                    <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">AUTO</span>
+                  )}
+                  {!column.isNullable && (
+                    <span className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded">NOT NULL</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Foreign Keys Section */}
+          {table.foreignKeys.length > 0 && (
+            <div className="border-t border-gray-200 bg-blue-50/50 px-4 py-3">
+              <p className="text-xs font-medium text-blue-700 mb-2">Foreign Keys</p>
+              <div className="space-y-1.5">
+                {table.foreignKeys.map((fk, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs text-gray-600">
+                    <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-blue-200">
+                      {fk.column}
+                    </span>
+                    <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
+                    <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-blue-200">
+                      {fk.referencedTable}.{fk.referencedColumn}
+                    </span>
+                    {(fk.onDelete || fk.onUpdate) && (
+                      <span className="text-gray-400">
+                        ({fk.onDelete && `ON DELETE ${fk.onDelete}`}
+                        {fk.onDelete && fk.onUpdate && ', '}
+                        {fk.onUpdate && `ON UPDATE ${fk.onUpdate}`})
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Indexes Section */}
+          {table.indexes.length > 0 && (
+            <div className="border-t border-gray-200 bg-purple-50/50 px-4 py-3">
+              <p className="text-xs font-medium text-purple-700 mb-2">Indexes</p>
+              <div className="space-y-1.5">
+                {table.indexes.map((index, idx) => (
+                  <div key={idx} className="flex items-center gap-2 text-xs text-gray-600">
+                    <span className="font-medium">{index.name}</span>
+                    <span className="text-gray-400">on</span>
+                    <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-purple-200">
+                      {index.columns.join(', ')}
+                    </span>
+                    {index.isUnique && (
+                      <span className="text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded">UNIQUE</span>
+                    )}
+                    {index.isClustered && (
+                      <span className="text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded">CLUSTERED</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
