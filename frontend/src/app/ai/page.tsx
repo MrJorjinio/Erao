@@ -211,6 +211,7 @@ export default function AIPage() {
   // Chat input state
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [loadingStage, setLoadingStage] = useState(0); // 0: Thinking, 1: Writing query, 2: Executing, 3: Formatting
 
   // Error state
   const [error, setError] = useState<string | null>(null);
@@ -241,6 +242,31 @@ export default function AIPage() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Cycle through loading stages
+  useEffect(() => {
+    if (!isSending) {
+      setLoadingStage(0);
+      return;
+    }
+
+    const stages = [
+      { delay: 0 },      // Thinking...
+      { delay: 1500 },   // Writing query...
+      { delay: 3000 },   // Executing...
+      { delay: 5000 },   // Formatting...
+    ];
+
+    const timers: NodeJS.Timeout[] = [];
+    stages.forEach((stage, index) => {
+      if (index > 0) {
+        const timer = setTimeout(() => setLoadingStage(index), stage.delay);
+        timers.push(timer);
+      }
+    });
+
+    return () => timers.forEach(t => clearTimeout(t));
+  }, [isSending]);
 
   // Close account menu when clicking outside
   useEffect(() => {
@@ -313,8 +339,12 @@ export default function AIPage() {
   const loadFiles = async () => {
     try {
       const response = await api.getFiles();
-      if (response.success) {
+      // Handle both wrapped { success, data } and direct { files } response formats
+      if ('success' in response && response.success && response.data) {
         setFiles(response.data.files);
+      } else if ('files' in response) {
+        // Direct response format from backend
+        setFiles((response as unknown as { files: FileDocument[] }).files);
       }
     } catch (err) {
       console.error("Failed to load files:", err);
@@ -1018,18 +1048,20 @@ export default function AIPage() {
             ))
           )}
           {isSending && (
-            <div className="w-[70%] max-w-[70%] bg-white rounded-2xl p-5 flex flex-col gap-3.5 shadow-sm overflow-hidden">
-              <span className="font-semibold text-base">Erao</span>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "0.1s" }}
-                />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "0.2s" }}
-                />
+            <div className="w-[70%] max-w-[70%] bg-white rounded-2xl p-5 shadow-sm">
+              <p className="font-semibold text-base mb-3">Erao</p>
+              <div className="flex items-center gap-3">
+                <span className="flex gap-1">
+                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
+                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.15s]" />
+                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.3s]" />
+                </span>
+                <span className="text-sm text-gray-600">
+                  {loadingStage === 0 && "Thinking..."}
+                  {loadingStage === 1 && "Writing query..."}
+                  {loadingStage === 2 && "Executing..."}
+                  {loadingStage === 3 && "Formatting results..."}
+                </span>
               </div>
             </div>
           )}

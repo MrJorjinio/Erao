@@ -13,8 +13,8 @@ public class FileDocumentService : IFileDocumentService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IEnumerable<IFileParser> _fileParsers;
+    private readonly IMinioService _minioService;
     private readonly ILogger<FileDocumentService> _logger;
-    private readonly string _uploadPath;
     private readonly long _maxFileSizeBytes;
 
     private static readonly Dictionary<string, FileType> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -32,20 +32,15 @@ public class FileDocumentService : IFileDocumentService
     public FileDocumentService(
         IUnitOfWork unitOfWork,
         IEnumerable<IFileParser> fileParsers,
+        IMinioService minioService,
         IConfiguration configuration,
         ILogger<FileDocumentService> logger)
     {
         _unitOfWork = unitOfWork;
         _fileParsers = fileParsers;
+        _minioService = minioService;
         _logger = logger;
-        _uploadPath = configuration["FileStorage:UploadPath"] ?? Path.Combine(Directory.GetCurrentDirectory(), "uploads");
         _maxFileSizeBytes = configuration.GetValue<long>("FileStorage:MaxFileSizeBytes", 100 * 1024 * 1024); // 100MB default
-
-        // Ensure upload directory exists
-        if (!Directory.Exists(_uploadPath))
-        {
-            Directory.CreateDirectory(_uploadPath);
-        }
     }
 
     public async Task<FileUploadResponse> UploadFileAsync(Guid userId, IFormFile file, CancellationToken cancellationToken = default)
@@ -83,14 +78,13 @@ public class FileDocumentService : IFileDocumentService
 
             // Generate unique filename
             var fileName = $"{Guid.NewGuid()}{extension}";
-            var userUploadPath = Path.Combine(_uploadPath, userId.ToString());
 
-            if (!Directory.Exists(userUploadPath))
+            // Upload to MinIO
+            string objectName;
+            using (var stream = file.OpenReadStream())
             {
-                Directory.CreateDirectory(userUploadPath);
+                objectName = await _minioService.UploadFileAsync(stream, fileName, file.ContentType, userId);
             }
-
-            var filePath = Path.Combine(userUploadPath, fileName);
 
             // Create file document entity
             var fileDocument = new FileDocument
@@ -100,24 +94,20 @@ public class FileDocumentService : IFileDocumentService
                 OriginalFileName = file.FileName,
                 FileType = fileType,
                 FileSizeBytes = file.Length,
-                StoragePath = filePath,
+                StoragePath = objectName, // Store MinIO object name
                 Status = FileProcessingStatus.Processing
             };
 
             await _unitOfWork.FileDocuments.AddAsync(fileDocument);
             await _unitOfWork.SaveChangesAsync();
 
-            // Save file to disk
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await file.CopyToAsync(stream, cancellationToken);
-            }
+            // Download from MinIO to parse
+            using var fileStream = await _minioService.DownloadFileAsync(objectName);
 
             // Parse file
             var parser = _fileParsers.FirstOrDefault(p => p.CanParse(fileType));
             if (parser != null)
             {
-                using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
                 var parseResult = await parser.ParseAsync(fileStream, file.FileName, cancellationToken);
 
                 if (parseResult.Success)
@@ -138,7 +128,7 @@ public class FileDocumentService : IFileDocumentService
                 // For unsupported parsing (like plain text), just store as-is
                 if (fileType == FileType.Text || fileType == FileType.Json || fileType == FileType.Xml)
                 {
-                    using var reader = new StreamReader(filePath);
+                    using var reader = new StreamReader(fileStream);
                     var content = await reader.ReadToEndAsync(cancellationToken);
                     fileDocument.ParsedContent = content;
                     fileDocument.Status = FileProcessingStatus.Completed;
@@ -153,7 +143,7 @@ public class FileDocumentService : IFileDocumentService
             await _unitOfWork.FileDocuments.UpdateAsync(fileDocument);
             await _unitOfWork.SaveChangesAsync();
 
-            _logger.LogInformation("File {FileName} uploaded successfully for user {UserId}", file.FileName, userId);
+            _logger.LogInformation("File {FileName} uploaded to MinIO successfully for user {UserId}", file.FileName, userId);
 
             return new FileUploadResponse
             {
@@ -295,16 +285,16 @@ public class FileDocumentService : IFileDocumentService
         if (file == null)
             return false;
 
-        // Delete physical file
-        if (!string.IsNullOrEmpty(file.StoragePath) && File.Exists(file.StoragePath))
+        // Delete from MinIO
+        if (!string.IsNullOrEmpty(file.StoragePath))
         {
             try
             {
-                File.Delete(file.StoragePath);
+                await _minioService.DeleteFileAsync(file.StoragePath);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to delete physical file {Path}", file.StoragePath);
+                _logger.LogWarning(ex, "Failed to delete file from MinIO: {ObjectName}", file.StoragePath);
             }
         }
 

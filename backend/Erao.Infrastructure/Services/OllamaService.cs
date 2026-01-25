@@ -19,7 +19,7 @@ public class OllamaService : IOllamaService
         _httpClient = httpClient;
         _logger = logger;
         _baseUrl = configuration["Ollama:BaseUrl"] ?? "http://localhost:11434";
-        _model = configuration["Ollama:Model"] ?? "qwen3-coder:480b-cloud";
+        _model = configuration["Ollama:Model"] ?? "gpt-oss:120b-cloud";
         _httpClient.BaseAddress = new Uri(_baseUrl);
         _httpClient.Timeout = TimeSpan.FromMinutes(5);
     }

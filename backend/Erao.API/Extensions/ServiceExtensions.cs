@@ -51,6 +51,9 @@ public static class ServiceExtensions
         services.AddScoped<IFileParser, CsvFileParser>();
         services.AddScoped<IFileDocumentService, FileDocumentService>();
 
+        // MinIO storage
+        services.AddSingleton<IMinioService, MinioService>();
+
         // AutoMapper
         services.AddAutoMapper(typeof(MappingProfile));
 
