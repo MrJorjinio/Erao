@@ -79,7 +79,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center px-4 relative">
+    <div className="min-h-screen bg-white text-gray-900 flex flex-col items-center justify-center px-4 relative">
       {/* Back Button */}
       <Link
         href="/"

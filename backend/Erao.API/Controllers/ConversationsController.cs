@@ -78,6 +78,26 @@ public class ConversationsController : ControllerBase
         }
     }
 
+    [HttpPut("{id}")]
+    public async Task<ActionResult<ApiResponse<ConversationDto>>> Update(Guid id, [FromBody] UpdateConversationRequest request)
+    {
+        try
+        {
+            var userId = GetUserId();
+            var conversation = await _conversationService.UpdateAsync(id, userId, request);
+            return Ok(ApiResponse<ConversationDto>.SuccessResponse(conversation, "Conversation updated"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<ConversationDto>.ErrorResponse(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating conversation {Id}", id);
+            return StatusCode(500, ApiResponse<ConversationDto>.ErrorResponse("An error occurred"));
+        }
+    }
+
     [HttpDelete("{id}")]
     public async Task<ActionResult<ApiResponse>> Delete(Guid id)
     {

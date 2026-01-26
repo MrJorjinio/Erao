@@ -10,6 +10,7 @@ public interface IConversationService
     Task<IEnumerable<ConversationDto>> GetUserConversationsAsync(Guid userId);
     Task<ConversationDto?> GetByIdAsync(Guid id, Guid userId);
     Task<ConversationDto> CreateAsync(Guid userId, CreateConversationRequest request);
+    Task<ConversationDto> UpdateAsync(Guid id, Guid userId, UpdateConversationRequest request);
     Task DeleteAsync(Guid id, Guid userId);
 }
 
@@ -76,6 +77,25 @@ public class ConversationService : IConversationService
         // Reload conversation to get navigation properties
         var savedConversation = await _unitOfWork.Conversations.GetWithMessagesAsync(conversation.Id);
         return _mapper.Map<ConversationDto>(savedConversation);
+    }
+
+    public async Task<ConversationDto> UpdateAsync(Guid id, Guid userId, UpdateConversationRequest request)
+    {
+        var conversation = await _unitOfWork.Conversations.GetByIdAsync(id);
+        if (conversation == null || conversation.UserId != userId)
+        {
+            throw new InvalidOperationException("Conversation not found");
+        }
+
+        if (!string.IsNullOrEmpty(request.Title))
+        {
+            conversation.Title = request.Title;
+        }
+
+        await _unitOfWork.Conversations.UpdateAsync(conversation);
+        await _unitOfWork.SaveChangesAsync();
+
+        return _mapper.Map<ConversationDto>(conversation);
     }
 
     public async Task DeleteAsync(Guid id, Guid userId)

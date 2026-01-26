@@ -67,7 +67,7 @@ const LogoIcon = ({ className = "w-12 h-5" }: { className?: string }) => (
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-white text-gray-900">
       {/* Navigation */}
       <nav className="w-full max-w-[960px] mx-auto px-5 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2">

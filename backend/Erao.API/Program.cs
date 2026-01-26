@@ -29,8 +29,13 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddSwaggerDocumentation();
 builder.Services.AddCorsPolicies(builder.Configuration);
 
-// SignalR
-builder.Services.AddSignalR();
+// SignalR with JSON options
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 
 var app = builder.Build();
 
@@ -57,6 +62,7 @@ app.UseAuthorization();
 app.MapControllers();
 
 // SignalR hub endpoint
-app.MapHub<Erao.API.Hubs.ChatHub>("/hubs/chat");
+app.MapHub<Erao.API.Hubs.ChatHub>("/hubs/chat")
+    .RequireCors("DefaultPolicy");
 
 app.Run();

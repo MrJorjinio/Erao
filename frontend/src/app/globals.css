@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+}
+
+.dark {
+  --background: #111827;
+  --foreground: #f9fafb;
 }
 
 @theme inline {
@@ -82,6 +89,19 @@ html {
   scrollbar-color: #d1d5db transparent;
 }
 
+/* Dark mode scrollbar */
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #4b5563;
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+.dark .custom-scrollbar {
+  scrollbar-color: #4b5563 transparent;
+}
+
 /* ERD Table scrollbar - professional dark theme */
 .erd-scrollbar::-webkit-scrollbar {
   width: 5px;
@@ -110,4 +130,34 @@ html {
 .erd-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: #9ca3af #f3f4f6;
+}
+
+/* Dark mode ERD scrollbar */
+.dark .erd-scrollbar::-webkit-scrollbar-track {
+  background: linear-gradient(to bottom, #1f2937, #111827);
+}
+
+.dark .erd-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(to bottom, #4b5563, #374151);
+  border: 1px solid #374151;
+}
+
+.dark .erd-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(to bottom, #6b7280, #4b5563);
+}
+
+.dark .erd-scrollbar::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(to bottom, #9ca3af, #6b7280);
+}
+
+.dark .erd-scrollbar {
+  scrollbar-color: #4b5563 #1f2937;
+}
+
+/* Dark mode focus-visible */
+.dark button:focus-visible,
+.dark a:focus-visible,
+.dark [role="button"]:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }

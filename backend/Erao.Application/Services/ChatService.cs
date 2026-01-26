@@ -10,6 +10,31 @@ namespace Erao.Application.Services;
 public interface IChatService
 {
     Task<ChatResponse> ProcessMessageAsync(Guid userId, ChatRequest request);
+
+    /// <summary>
+    /// Prepares a streaming chat session and returns context needed for streaming
+    /// </summary>
+    Task<StreamingChatContext> PrepareStreamingChatAsync(Guid userId, ChatRequest request);
+
+    /// <summary>
+    /// Finalizes a streaming chat after all chunks have been received
+    /// </summary>
+    Task<ChatResponse> FinalizeStreamingChatAsync(StreamingChatContext context, string fullResponse);
+}
+
+/// <summary>
+/// Context needed to stream and finalize a chat message
+/// </summary>
+public class StreamingChatContext
+{
+    public required Guid UserId { get; set; }
+    public required Guid ConversationId { get; set; }
+    public required Message UserMessage { get; set; }
+    public required string SystemPrompt { get; set; }
+    public required List<(string role, string content)> History { get; set; }
+    public DatabaseConnection? DatabaseConnection { get; set; }
+    public FileDocument? FileDocument { get; set; }
+    public required Stopwatch Stopwatch { get; set; }
 }
 
 public class ChatService : IChatService
@@ -324,12 +349,15 @@ Rules:
 - Only SELECT unless modifications explicitly requested
 - Use DISTINCT when JOINs might produce duplicates
 - Use LIMIT 1 when finding "the one" of something
+- ROUND with precision: MUST cast to numeric first
+  ✓ Correct: ROUND(value::numeric, 2)
+  ✗ Wrong: ROUND(value, 2) — fails for double precision
 
 ## Ordering for Charts
 Results display as charts. Make them meaningful:
 
 Column order:
-- First: Label/category (name, title, date)
+- First: Label/category (name, title, date) - MUST be human-readable
 - Second+: Numeric values (amount, count, total)
 
 Sorting:
@@ -338,6 +366,34 @@ Sorting:
 
 ✓ Correct: ORDER BY "TotalSales" DESC
 ✗ Wrong: ORDER BY "CustomerId" or ORDER BY "PostalCode"
+
+## CRITICAL: Use Human-Readable Labels, NOT IDs
+Charts need NAMES, not IDs. Always JOIN to get display names:
+
+✓ Correct (uses employee name):
+```sql
+SELECT e."FirstName" || ' ' || e."LastName" AS "Employee", COUNT(o."OrderId") AS "Orders"
+FROM "Employees" e
+JOIN "Orders" o ON e."EmployeeId" = o."EmployeeId"
+GROUP BY e."EmployeeId", e."FirstName", e."LastName"
+ORDER BY "Orders" DESC
+```
+
+✗ Wrong (shows ID instead of name):
+```sql
+SELECT "EmployeeId", COUNT(*) AS "Orders"
+FROM "Orders"
+GROUP BY "EmployeeId"
+ORDER BY "Orders" DESC
+```
+
+Apply this rule to ALL entities:
+- Employees → Use FirstName/LastName, not EmployeeId
+- Customers → Use CustomerName/CompanyName, not CustomerId
+- Products → Use ProductName, not ProductId
+- Categories → Use CategoryName, not CategoryId
+- Suppliers → Use SupplierName/CompanyName, not SupplierId
+- Any entity → Always prefer Name/Title columns over Id columns
 
 ## Explaining Calculations
 When asked HOW something was calculated:
@@ -586,9 +642,15 @@ User: ""What about the third highest?""
 Assistant: The third highest spender is John with $5000.
 
 ## Data Ordering for Charts
-- FIRST column: label/category (name, title, date)
+- FIRST column: label/category (name, title, date) - MUST be human-readable
 - SECOND+ columns: numeric values (amount, count, total)
 - Sort by value column for ""top X"" queries, by date for time-series
+
+## CRITICAL: Use Human-Readable Labels, NOT IDs
+Charts display names, not IDs. Always use descriptive columns:
+- Use employee/customer/product NAMES, not their IDs
+- If data has both Id and Name columns, always show the Name
+- Example: Show ""John Smith"" instead of ""EMP001"" or ""42""
 
 ## Rules
 - Do NOT generate SQL - this is file data
@@ -693,5 +755,256 @@ Use this data to answer the user's questions. Calculate statistics, find pattern
         content = System.Text.RegularExpressions.Regex.Replace(content, @"\n{3,}", "\n\n");
 
         return content.Trim();
+    }
+
+    /// <summary>
+    /// Prepares streaming context - validates user, loads conversation, saves user message
+    /// </summary>
+    public async Task<StreamingChatContext> PrepareStreamingChatAsync(Guid userId, ChatRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        // Validate user query limit
+        var user = await _unitOfWork.Users.GetByIdAsync(userId);
+        if (user == null)
+        {
+            throw new UnauthorizedAccessException("User not found");
+        }
+
+        // Reset billing cycle if needed
+        if (DateTime.UtcNow >= user.BillingCycleReset)
+        {
+            user.QueriesUsedThisMonth = 0;
+            user.BillingCycleReset = DateTime.UtcNow.AddMonths(1);
+        }
+
+        if (user.QueriesUsedThisMonth >= user.QueryLimitPerMonth)
+        {
+            throw new InvalidOperationException("Query limit reached for this billing cycle");
+        }
+
+        // Get conversation
+        var conversation = await _unitOfWork.Conversations.GetWithMessagesAsync(request.ConversationId);
+        if (conversation == null || conversation.UserId != userId)
+        {
+            throw new InvalidOperationException("Conversation not found");
+        }
+
+        // Auto-generate conversation title from first message if empty
+        var isFirstMessage = string.IsNullOrEmpty(conversation.Title) || conversation.Title == "New Chat";
+        if (isFirstMessage && (conversation.Messages == null || conversation.Messages.Count == 0))
+        {
+            conversation.Title = GenerateTitle(request.Message);
+            await _unitOfWork.Conversations.UpdateAsync(conversation);
+        }
+
+        // Save user message
+        var userMessage = new Message
+        {
+            ConversationId = conversation.Id,
+            Role = MessageRole.User,
+            Content = request.Message
+        };
+        await _unitOfWork.Messages.AddAsync(userMessage);
+        await _unitOfWork.SaveChangesAsync();
+
+        // Get schema context if database connection or file is set
+        string? schemaContext = null;
+        string? fileDataContext = null;
+        DatabaseConnection? dbConnection = null;
+        FileDocument? fileDocument = null;
+
+        if (conversation.DatabaseConnectionId.HasValue)
+        {
+            dbConnection = await _unitOfWork.DatabaseConnections.GetByIdAsync(conversation.DatabaseConnectionId.Value);
+            if (dbConnection != null)
+            {
+                schemaContext = dbConnection.SchemaCache;
+
+                if (string.IsNullOrEmpty(schemaContext))
+                {
+                    var host = _encryptionService.Decrypt(dbConnection.EncryptedHost);
+                    var port = int.Parse(_encryptionService.Decrypt(dbConnection.EncryptedPort));
+                    var database = _encryptionService.Decrypt(dbConnection.EncryptedDatabaseName);
+                    var username = _encryptionService.Decrypt(dbConnection.EncryptedUsername);
+                    var password = _encryptionService.Decrypt(dbConnection.EncryptedPassword);
+
+                    schemaContext = await _databaseQueryService.GetSchemaAsync(
+                        dbConnection.DatabaseType, host, port, database, username, password);
+
+                    dbConnection.SchemaCache = schemaContext;
+                    await _unitOfWork.DatabaseConnections.UpdateAsync(dbConnection);
+                    await _unitOfWork.SaveChangesAsync();
+                }
+            }
+        }
+        else if (conversation.FileDocumentId.HasValue)
+        {
+            fileDocument = await _unitOfWork.FileDocuments.GetByIdAsync(conversation.FileDocumentId.Value);
+            if (fileDocument != null)
+            {
+                schemaContext = fileDocument.SchemaInfo;
+                fileDataContext = fileDocument.ParsedContent;
+            }
+        }
+
+        // Build chat history
+        var history = (conversation.Messages ?? Enumerable.Empty<Message>())
+            .Where(m => m.Id != userMessage.Id) // Exclude the just-added user message
+            .OrderBy(m => m.CreatedAt)
+            .Select(m => {
+                var role = m.Role == MessageRole.User ? "user" : "assistant";
+                var content = m.Content;
+
+                if (m.Role == MessageRole.Assistant && !string.IsNullOrEmpty(m.QueryResult))
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(m.QueryResult);
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("rows", out var rows) && rows.GetArrayLength() > 0)
+                        {
+                            var rowCount = rows.GetArrayLength();
+                            if (rowCount <= 5)
+                            {
+                                var dataLines = new List<string>();
+                                foreach (var row in rows.EnumerateArray())
+                                {
+                                    var vals = new List<string>();
+                                    foreach (var prop in row.EnumerateObject())
+                                    {
+                                        vals.Add($"{prop.Name}={prop.Value}");
+                                    }
+                                    dataLines.Add(string.Join(", ", vals));
+                                }
+                                content += $"\n[DATA_CONTEXT: {rowCount} row(s): {string.Join(" | ", dataLines)}]";
+                            }
+                            else
+                            {
+                                content += $"\n[DATA_CONTEXT: Query returned {rowCount} rows]";
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                return (role, content);
+            })
+            .ToList();
+
+        // Build system prompt
+        var systemPrompt = fileDocument != null
+            ? BuildFileSystemPrompt(schemaContext, fileDataContext, fileDocument.OriginalFileName)
+            : BuildSystemPrompt(schemaContext);
+
+        return new StreamingChatContext
+        {
+            UserId = userId,
+            ConversationId = request.ConversationId,
+            UserMessage = userMessage,
+            SystemPrompt = systemPrompt,
+            History = history,
+            DatabaseConnection = dbConnection,
+            FileDocument = fileDocument,
+            Stopwatch = stopwatch
+        };
+    }
+
+    /// <summary>
+    /// Finalizes streaming - extracts SQL, executes query, saves assistant message
+    /// </summary>
+    public async Task<ChatResponse> FinalizeStreamingChatAsync(StreamingChatContext context, string fullResponse)
+    {
+        var user = await _unitOfWork.Users.GetByIdAsync(context.UserId);
+        if (user == null)
+        {
+            throw new UnauthorizedAccessException("User not found");
+        }
+
+        // Try to extract SQL from response (for database mode) or analyze file data
+        string? sqlQuery = null;
+        string? queryResult = null;
+
+        if (context.DatabaseConnection != null)
+        {
+            sqlQuery = ExtractSqlFromResponse(fullResponse);
+
+            if (!string.IsNullOrEmpty(sqlQuery))
+            {
+                try
+                {
+                    var host = _encryptionService.Decrypt(context.DatabaseConnection.EncryptedHost);
+                    var port = int.Parse(_encryptionService.Decrypt(context.DatabaseConnection.EncryptedPort));
+                    var database = _encryptionService.Decrypt(context.DatabaseConnection.EncryptedDatabaseName);
+                    var username = _encryptionService.Decrypt(context.DatabaseConnection.EncryptedUsername);
+                    var password = _encryptionService.Decrypt(context.DatabaseConnection.EncryptedPassword);
+
+                    queryResult = await _databaseQueryService.ExecuteQueryAsync(
+                        context.DatabaseConnection.DatabaseType, host, port, database, username, password, sqlQuery);
+                }
+                catch (Exception ex)
+                {
+                    queryResult = $"Error executing query: {ex.Message}";
+                }
+            }
+            else
+            {
+                queryResult = ExtractDataContextAsResult(fullResponse);
+            }
+        }
+        else if (context.FileDocument != null)
+        {
+            queryResult = ExtractJsonBlock(fullResponse);
+            if (string.IsNullOrEmpty(queryResult))
+            {
+                queryResult = ExtractDataContextAsResult(fullResponse);
+            }
+        }
+
+        // Clean the response
+        var cleanedContent = StripCodeBlocks(fullResponse);
+
+        // Estimate tokens (rough estimate based on characters)
+        var tokensUsed = fullResponse.Length / 4;
+
+        // Save assistant message
+        var assistantMessage = new Message
+        {
+            ConversationId = context.ConversationId,
+            Role = MessageRole.Assistant,
+            Content = cleanedContent,
+            SqlQuery = sqlQuery,
+            QueryResult = queryResult,
+            TokensUsed = tokensUsed
+        };
+        await _unitOfWork.Messages.AddAsync(assistantMessage);
+
+        // Update user query count
+        user.QueriesUsedThisMonth++;
+        await _unitOfWork.Users.UpdateAsync(user);
+
+        // Log usage
+        context.Stopwatch.Stop();
+        var usageLog = new UsageLog
+        {
+            UserId = context.UserId,
+            DatabaseConnectionId = context.DatabaseConnection?.Id,
+            QueryType = sqlQuery != null ? "SQL" : "Chat",
+            TokensUsed = tokensUsed,
+            ExecutionTimeMs = (int)context.Stopwatch.ElapsedMilliseconds
+        };
+        await _unitOfWork.UsageLogs.AddAsync(usageLog);
+
+        await _unitOfWork.SaveChangesAsync();
+
+        var assistantDto = _mapper.Map<MessageDto>(assistantMessage);
+
+        return new ChatResponse
+        {
+            UserMessage = _mapper.Map<MessageDto>(context.UserMessage),
+            AssistantMessage = assistantDto,
+            QueryResult = queryResult,
+            TokensUsed = tokensUsed
+        };
     }
 }

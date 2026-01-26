@@ -138,7 +138,7 @@ function OtpVerificationContent() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col items-center justify-center">
+    <div className="min-h-screen bg-white text-gray-900 flex flex-col items-center justify-center">
       <div className="w-full max-w-[400px] px-6 flex flex-col items-center gap-8">
         {/* Logo */}
         <Link href="/" className="font-bold text-xl tracking-tight">
@@ -225,7 +225,7 @@ function OtpVerificationContent() {
 export default function OtpVerificationPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-white flex flex-col items-center justify-center">
+      <div className="min-h-screen bg-white text-gray-900 flex flex-col items-center justify-center">
         <div className="w-full max-w-[400px] px-6 flex flex-col items-center gap-8">
           <span className="font-bold text-xl tracking-tight">Erao.</span>
           <div className="text-sm text-gray-500">Loading...</div>

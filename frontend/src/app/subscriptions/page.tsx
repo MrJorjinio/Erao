@@ -11,6 +11,7 @@ export default function SubscriptionsPage() {
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
     if (!auth.isAuthenticated()) {
@@ -18,7 +19,21 @@ export default function SubscriptionsPage() {
       return;
     }
     loadPlans();
+    // Load dark mode preference
+    const savedMode = localStorage.getItem("darkMode");
+    if (savedMode === "true") {
+      setDarkMode(true);
+      document.documentElement.classList.add("dark");
+    }
   }, [router]);
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [darkMode]);
 
   const loadPlans = async () => {
     try {
@@ -60,37 +75,50 @@ export default function SubscriptionsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center transition-colors">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-white"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-10 gap-10">
-      <div className="bg-white rounded-2xl p-5 text-center">
-        <h1 className="text-2xl font-bold">Choose your plan</h1>
-        <p className="text-gray-500 text-sm mt-2">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col items-center justify-center p-10 gap-10 transition-colors relative">
+      {/* Back Button - Top Left */}
+      <Link
+        href="/ai"
+        className="absolute top-6 left-6 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        Back
+      </Link>
+
+      <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 text-center transition-colors">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Choose your plan</h1>
+        <p className="text-gray-500 dark:text-gray-400 text-sm mt-2">
           Select the perfect plan for your database needs
         </p>
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-sm">
+        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 px-4 py-2 rounded-lg text-sm">
           {error}
         </div>
       )}
 
-      <div className="flex gap-6">
+      <div className="flex gap-6 flex-wrap justify-center">
         {plans.map((plan) => (
           <div
             key={plan.tier}
-            className={`w-80 rounded-2xl p-8 ${
-              plan.isPopular ? "bg-black text-white" : "bg-white"
+            className={`w-80 rounded-2xl p-8 transition-colors ${
+              plan.isPopular
+                ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900"
+                : "bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
             }`}
           >
             {plan.isPopular && (
-              <span className="bg-white text-black text-xs font-semibold px-3 py-1 rounded-full">
+              <span className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white text-xs font-semibold px-3 py-1 rounded-full">
                 Most Popular
               </span>
             )}
@@ -101,7 +129,9 @@ export default function SubscriptionsPage() {
                 <span className="text-3xl font-bold">${plan.price}</span>
                 <span
                   className={`text-sm ${
-                    plan.isPopular ? "text-gray-300" : "text-gray-500"
+                    plan.isPopular
+                      ? "text-gray-300 dark:text-gray-600"
+                      : "text-gray-500 dark:text-gray-400"
                   }`}
                 >
                   /month
@@ -109,7 +139,9 @@ export default function SubscriptionsPage() {
               </div>
               <p
                 className={`text-sm mt-2 ${
-                  plan.isPopular ? "text-gray-300" : "text-gray-500"
+                  plan.isPopular
+                    ? "text-gray-300 dark:text-gray-600"
+                    : "text-gray-500 dark:text-gray-400"
                 }`}
               >
                 {plan.description}
@@ -127,12 +159,12 @@ export default function SubscriptionsPage() {
             <button
               onClick={() => !plan.isCurrent && handleUpgrade(plan.tier)}
               disabled={plan.isCurrent || upgrading === plan.tier}
-              className={`w-full mt-6 py-3 rounded-lg font-medium text-sm transition ${
+              className={`w-full mt-6 py-3 rounded-lg font-medium text-sm transition-colors ${
                 plan.isCurrent
-                  ? "bg-gray-100 text-gray-500 cursor-not-allowed"
+                  ? "bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed"
                   : plan.isPopular
-                  ? "bg-white text-black hover:bg-gray-100"
-                  : "bg-black text-white hover:bg-gray-800"
+                  ? "bg-white dark:bg-gray-900 text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-800"
+                  : "bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100"
               }`}
             >
               {upgrading === plan.tier
@@ -146,10 +178,6 @@ export default function SubscriptionsPage() {
           </div>
         ))}
       </div>
-
-      <Link href="/ai" className="text-black text-sm font-medium hover:underline">
-        &larr; Back to chat
-      </Link>
     </div>
   );
 }

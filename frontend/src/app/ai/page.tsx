@@ -117,19 +117,19 @@ function VirtualTable({
       {/* Scroll container - handles both horizontal and vertical scroll */}
       <div
         ref={parentRef}
-        className="max-h-[400px] overflow-auto"
+        className="max-h-[400px] overflow-auto custom-scrollbar"
       >
         {/* Inner container with minimum width for horizontal scroll */}
         <div style={{ minWidth: `${minTableWidth}px` }}>
           {/* Table Header - sticky top, scrolls horizontally with data */}
           <div
-            className="flex items-center gap-2.5 px-3 py-2.5 bg-[#fafafc] border-b border-gray-200 sticky top-0 z-10"
+            className="flex items-center gap-2.5 px-3 py-2.5 bg-[#fafafc] dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 sticky top-0 z-10"
           >
-            <span className="w-12 text-xs font-semibold text-gray-500 flex-shrink-0">#</span>
+            <span className="w-12 text-xs font-semibold text-gray-500 dark:text-gray-400 flex-shrink-0">#</span>
             {columns.map((col) => (
               <span
                 key={col}
-                className="min-w-[120px] w-[120px] text-xs font-semibold text-gray-700 truncate"
+                className="min-w-[120px] w-[120px] text-xs font-semibold text-gray-700 dark:text-gray-300 truncate"
                 title={col}
               >
                 {col}
@@ -150,7 +150,7 @@ function VirtualTable({
                 <div
                   key={virtualRow.index}
                   className={`flex items-center gap-2.5 px-3 py-2.5 absolute w-full ${
-                    virtualRow.index % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                    virtualRow.index % 2 === 0 ? "bg-white dark:bg-gray-900" : "bg-gray-50/50 dark:bg-gray-800/50"
                   }`}
                   style={{
                     height: `${virtualRow.size}px`,
@@ -163,7 +163,7 @@ function VirtualTable({
                   {columns.map((col) => (
                     <span
                       key={col}
-                      className="min-w-[120px] w-[120px] text-sm text-gray-700 truncate"
+                      className="min-w-[120px] w-[120px] text-sm text-gray-700 dark:text-gray-300 truncate"
                       title={String(row[col] ?? "")}
                     >
                       {String(row[col] ?? "")}
@@ -177,7 +177,7 @@ function VirtualTable({
       </div>
 
       {/* Row count indicator */}
-      <div className="text-xs text-gray-400 text-center py-2 border-t border-gray-100">
+      <div className="text-xs text-gray-400 text-center py-2 border-t border-gray-100 dark:border-gray-700">
         {rows.length} rows total
       </div>
     </div>
@@ -218,7 +218,9 @@ export default function AIPage() {
   // Chat input state
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [loadingStage, setLoadingStage] = useState(0); // 0: Thinking, 1: Writing query, 2: Executing, 3: Formatting
+
+  // Loading phase indicator
+  const [currentPhase, setCurrentPhase] = useState<"writing" | "executing" | null>(null);
 
   // Error state
   const [error, setError] = useState<string | null>(null);
@@ -227,8 +229,27 @@ export default function AIPage() {
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
   // Search state
-  const [showSearchInput, setShowSearchInput] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Rename conversation state
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  // Chat menu state
+  const [chatMenuOpen, setChatMenuOpen] = useState<string | null>(null);
+  const [chatMenuOpenUp, setChatMenuOpenUp] = useState(false);
+  const chatListRef = useRef<HTMLDivElement>(null);
+
+  // Delete confirmation modal state
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    type: 'conversation' | 'database';
+    id: string;
+    name: string;
+  } | null>(null);
+
+  // Dark mode state
+  const [darkMode, setDarkMode] = useState(false);
 
   // Chart view state - tracks view mode per message
   const [chartViews, setChartViews] = useState<Record<string, ChartType>>({});
@@ -250,30 +271,15 @@ export default function AIPage() {
     scrollToBottom();
   }, [messages]);
 
-  // Cycle through loading stages
+  // Close chat menu when clicking outside
   useEffect(() => {
-    if (!isSending) {
-      setLoadingStage(0);
-      return;
+    const handleClickOutside = () => setChatMenuOpen(null);
+    if (chatMenuOpen) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
     }
+  }, [chatMenuOpen]);
 
-    const stages = [
-      { delay: 0 },      // Thinking...
-      { delay: 1500 },   // Writing query...
-      { delay: 3000 },   // Executing...
-      { delay: 5000 },   // Formatting...
-    ];
-
-    const timers: NodeJS.Timeout[] = [];
-    stages.forEach((stage, index) => {
-      if (index > 0) {
-        const timer = setTimeout(() => setLoadingStage(index), stage.delay);
-        timers.push(timer);
-      }
-    });
-
-    return () => timers.forEach(t => clearTimeout(t));
-  }, [isSending]);
 
   // Close account menu when clicking outside
   useEffect(() => {
@@ -291,6 +297,38 @@ export default function AIPage() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [showAccountMenu]);
+
+  // Close search modal on Esc key
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && showSearchModal) {
+        setShowSearchModal(false);
+        setSearchQuery("");
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [showSearchModal]);
+
+  // Dark mode effect - sync with localStorage and apply class
+  useEffect(() => {
+    const savedMode = localStorage.getItem("darkMode");
+    if (savedMode === "true") {
+      setDarkMode(true);
+      document.documentElement.classList.add("dark");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("darkMode", "true");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("darkMode", "false");
+    }
+  }, [darkMode]);
 
   // Check auth and load initial data
   useEffect(() => {
@@ -499,6 +537,8 @@ export default function AIPage() {
     const messageContent = inputValue.trim();
     setInputValue("");
     setIsSending(true);
+    setIsStreaming(false);
+    setStreamingText("");
     setError(null);
 
     // If no conversation selected, create one first
@@ -545,27 +585,37 @@ export default function AIPage() {
     setMessages((prev) => [...prev, tempUserMessage]);
 
     try {
+      // Fake phases - show "writing" after 500ms, "executing" after 2s
+      const writingTimeout = setTimeout(() => setCurrentPhase("writing"), 500);
+      const executingTimeout = setTimeout(() => setCurrentPhase("executing"), 2000);
+
+      // Use REST API
       const response = await api.sendMessage({
         conversationId: conversationId!,
         message: messageContent,
+        executeQuery: true,
       });
 
-      if (response.success) {
-        // Replace temp message with actual user message and add assistant response
-        setMessages((prev) => {
-          const filtered = prev.filter((m) => m && m.id !== tempUserMessage.id);
-          return [
-            ...filtered,
-            response.data.userMessage,
-            response.data.assistantMessage,
-          ];
-        });
+      // Clear fake phase timers
+      clearTimeout(writingTimeout);
+      clearTimeout(executingTimeout);
 
-        // Check if user requested a specific chart type and auto-set it
+      if (response.success) {
+        // Replace temp message with real user message
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === tempUserMessage.id ? response.data.userMessage : m
+          )
+        );
+
+        // Add assistant message
+        setMessages((prev) => [...prev, response.data.assistantMessage]);
+
+        // Check if user requested a specific chart type
         const requestedChartType = detectRequestedChartType(messageContent);
         if (requestedChartType && response.data.assistantMessage.queryResult) {
-          setChartViews((prev) => ({
-            ...prev,
+          setChartViews((prevViews) => ({
+            ...prevViews,
             [response.data.assistantMessage.id]: requestedChartType,
           }));
         }
@@ -573,17 +623,20 @@ export default function AIPage() {
         // Refresh conversations to get updated title
         loadConversations();
       }
+
+      setCurrentPhase(null);
+      setIsSending(false);
     } catch (err) {
       // Remove optimistic message on error
       setMessages((prev) => prev.filter((m) => m && m.id !== tempUserMessage.id));
+      setCurrentPhase(null);
+      setIsSending(false);
       if (err instanceof ApiError) {
         setError(err.message);
       } else {
         setError("Failed to send message");
       }
       setInputValue(messageContent);
-    } finally {
-      setIsSending(false);
     }
   };
 
@@ -595,6 +648,54 @@ export default function AIPage() {
     }
     auth.clearTokens();
     router.push("/login");
+  };
+
+  // Rename conversation handler
+  const handleRenameConversation = async (conversationId: string, newTitle: string) => {
+    if (!newTitle.trim()) {
+      setEditingConversationId(null);
+      return;
+    }
+    try {
+      const response = await api.updateConversation(conversationId, { title: newTitle.trim() });
+      if (response.success) {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === conversationId ? { ...c, title: newTitle.trim() } : c))
+        );
+      }
+    } catch (err) {
+      console.error("Failed to rename conversation:", err);
+    }
+    setEditingConversationId(null);
+  };
+
+  // Delete conversation handler
+  const handleDeleteConversation = async (conversationId: string) => {
+    try {
+      await api.deleteConversation(conversationId);
+      setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      if (selectedConversationId === conversationId) {
+        setSelectedConversationId(null);
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error("Failed to delete conversation:", err);
+    }
+    setDeleteConfirm(null);
+  };
+
+  // Delete database handler
+  const handleDeleteDatabase = async (databaseId: string) => {
+    try {
+      await api.deleteDatabase(databaseId);
+      setDatabases((prev) => prev.filter((d) => d.id !== databaseId));
+      if (selectedDatabaseId === databaseId) {
+        setSelectedDatabaseId(null);
+      }
+    } catch (err) {
+      console.error("Failed to delete database:", err);
+    }
+    setDeleteConfirm(null);
   };
 
   const selectedConversation = conversations.find(
@@ -614,21 +715,21 @@ export default function AIPage() {
   const userInitial = user?.firstName?.[0]?.toUpperCase() || "U";
 
   return (
-    <div className="h-screen bg-[#f9fafb] flex">
+    <div className="h-screen bg-gray-50 dark:bg-gray-900 flex transition-colors duration-200">
       {/* Sidebar */}
-      <aside className="w-[260px] bg-white flex flex-col justify-between border-r border-gray-100">
+      <aside className="w-[260px] bg-white dark:bg-gray-800 flex flex-col justify-between border-r border-gray-100/80 dark:border-gray-700/80 transition-colors duration-200">
         {/* Top Section */}
         <div className="flex flex-col">
           {/* Header */}
           <div className="px-4 pt-5 pb-3">
-            <span className="font-semibold text-base">Chats</span>
+            <span className="font-semibold text-base text-gray-900 dark:text-white">Chats</span>
           </div>
 
           {/* Action Buttons */}
-          <div className="flex flex-col gap-1 px-3 pb-3">
+          <div className="flex flex-col gap-1.5 px-3 pb-3">
             <button
               onClick={createNewConversation}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-[#f5f5f5] rounded-lg transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white rounded-xl transition-all duration-200 active:scale-[0.98]"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -636,8 +737,8 @@ export default function AIPage() {
               New chat
             </button>
             <button
-              onClick={() => setShowSearchInput(!showSearchInput)}
-              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-[#f5f5f5] rounded-lg transition-colors"
+              onClick={() => setShowSearchModal(true)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white rounded-xl transition-all duration-200 active:scale-[0.98]"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -646,86 +747,168 @@ export default function AIPage() {
             </button>
           </div>
 
-          {/* Search Input */}
-          {showSearchInput && (
-            <div className="px-3 pb-3">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search conversations..."
-                className="w-full h-9 bg-[#f5f5f5] rounded-lg px-3 text-sm outline-none placeholder:text-gray-400"
-                autoFocus
-              />
-            </div>
-          )}
-
           {/* Chat List */}
-          <div className="flex flex-col gap-1 px-3 pb-3 overflow-y-auto max-h-[calc(100vh-280px)] custom-scrollbar">
+          <div ref={chatListRef} className="flex flex-col gap-1 px-3 pb-3 overflow-y-auto max-h-[calc(100vh-280px)] custom-scrollbar">
             {loadingConversations ? (
-              <div className="text-center py-4 text-sm text-gray-400">
+              <div className="text-center py-4 text-sm text-gray-400 dark:text-gray-500">
                 Loading...
               </div>
             ) : conversations.length === 0 ? (
-              <div className="text-center py-4 text-sm text-gray-400">
+              <div className="text-center py-4 text-sm text-gray-400 dark:text-gray-500">
                 No conversations yet
               </div>
             ) : (
-              conversations
-                .filter((chat) =>
-                  searchQuery === "" ||
-                  (chat.title || "New Chat").toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  (chat.databaseConnectionName || "").toLowerCase().includes(searchQuery.toLowerCase())
-                )
-                .map((chat) => (
-                <button
-                  key={chat.id}
-                  onClick={() => selectConversation(chat.id)}
-                  className={`w-full text-left rounded-[10px] px-3.5 py-3 flex flex-col gap-1 transition-colors ${
-                    chat.id === selectedConversationId
-                      ? "bg-[#fafafa]"
-                      : "bg-white hover:bg-[#fafafa]"
-                  }`}
-                >
-                  <span className="text-sm font-medium truncate">
-                    {chat.title || "New Chat"}
-                  </span>
-                  <div className="flex items-center gap-2 text-xs text-gray-400">
-                    {(chat.databaseConnectionName || chat.fileDocumentName) && (
-                      <span className="truncate max-w-[100px]">
-                        {chat.databaseConnectionName || chat.fileDocumentName}
-                      </span>
-                    )}
-                    {(chat.databaseConnectionName || chat.fileDocumentName) && <span>·</span>}
-                    <span>{formatRelativeTime(chat.updatedAt)}</span>
-                  </div>
-                </button>
-              ))
+              conversations.map((chat) => (
+                    <div
+                      key={chat.id}
+                      className={`group relative w-full text-left rounded-xl px-3.5 py-3 flex flex-col gap-1 cursor-pointer transition-all duration-200 ${
+                        chatMenuOpen === chat.id ? "z-50" : ""
+                      } ${
+                        chat.id === selectedConversationId
+                          ? "bg-gray-100/80 dark:bg-gray-700/80 shadow-sm"
+                          : "bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:shadow-sm"
+                      }`}
+                      onClick={() => {
+                        if (editingConversationId !== chat.id) {
+                          setChatMenuOpen(null);
+                          selectConversation(chat.id);
+                        }
+                      }}
+                    >
+                      {editingConversationId === chat.id ? (
+                        <input
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onBlur={() => handleRenameConversation(chat.id, editingTitle)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleRenameConversation(chat.id, editingTitle);
+                            if (e.key === "Escape") setEditingConversationId(null);
+                          }}
+                          className="text-sm font-medium bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 w-full pr-8 dark:text-white"
+                          autoFocus
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span className="text-sm font-medium truncate pr-8 text-gray-900 dark:text-white">
+                          {chat.title || "New Chat"}
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500 pr-8">
+                        {(chat.databaseConnectionName || chat.fileDocumentName) && (
+                          <>
+                            <span className="truncate max-w-[80px]">
+                              {chat.databaseConnectionName || chat.fileDocumentName}
+                            </span>
+                            <span>·</span>
+                          </>
+                        )}
+                        <span className="whitespace-nowrap">{formatRelativeTime(chat.updatedAt)}</span>
+                      </div>
+                      {/* More options button */}
+                      {editingConversationId !== chat.id && (
+                        <div className={`absolute right-2 top-1/2 -translate-y-1/2 ${chatMenuOpen === chat.id ? "z-[100]" : ""}`}>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (chatMenuOpen === chat.id) {
+                                setChatMenuOpen(null);
+                              } else {
+                                // Check if button is in bottom half of chat list
+                                const button = e.currentTarget;
+                                const container = chatListRef.current;
+                                if (container) {
+                                  const containerRect = container.getBoundingClientRect();
+                                  const buttonRect = button.getBoundingClientRect();
+                                  const buttonBottom = buttonRect.bottom - containerRect.top;
+                                  const containerHeight = containerRect.height;
+                                  // If button is in bottom 100px of visible area, open menu upward
+                                  setChatMenuOpenUp(buttonBottom > containerHeight - 100);
+                                }
+                                setChatMenuOpen(chat.id);
+                              }
+                            }}
+                            className={`p-1.5 rounded-md transition-colors ${
+                              chatMenuOpen === chat.id
+                                ? "bg-gray-200 dark:bg-gray-600"
+                                : "opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-600"
+                            }`}
+                          >
+                            <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="currentColor" viewBox="0 0 24 24">
+                              <circle cx="12" cy="6" r="1.5" />
+                              <circle cx="12" cy="12" r="1.5" />
+                              <circle cx="12" cy="18" r="1.5" />
+                            </svg>
+                          </button>
+                          {/* Dropdown menu */}
+                          {chatMenuOpen === chat.id && (
+                            <div
+                              className={`absolute right-0 w-36 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 py-1 ${
+                                chatMenuOpenUp ? "bottom-full mb-1" : "top-full mt-1"
+                              }`}
+                            >
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setChatMenuOpen(null);
+                                  setEditingConversationId(chat.id);
+                                  setEditingTitle(chat.title || "New Chat");
+                                }}
+                                className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                </svg>
+                                Rename
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setChatMenuOpen(null);
+                                  setDeleteConfirm({
+                                    type: 'conversation',
+                                    id: chat.id,
+                                    name: chat.title || 'New Chat'
+                                  });
+                                }}
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                ))
             )}
           </div>
         </div>
 
         {/* User Profile */}
-        <div className="p-3 relative">
+        <div className="p-3 relative border-t border-gray-100/80 dark:border-gray-700/80">
           <button
             onClick={() => setShowAccountMenu(!showAccountMenu)}
-            className="w-full bg-[#fafafa] rounded-xl p-3 flex items-center gap-3 hover:bg-gray-100 transition-colors"
+            className="w-full bg-gray-50 dark:bg-gray-700/50 rounded-xl p-3 flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-all duration-200 active:scale-[0.99]"
           >
-            <div className="w-9 h-9 bg-black rounded-[10px] flex items-center justify-center">
+            <div className="w-9 h-9 bg-gradient-to-br from-gray-800 to-gray-900 dark:from-gray-600 dark:to-gray-700 rounded-xl flex items-center justify-center shadow-sm">
               <span className="text-white text-xs font-semibold">
                 {userInitial}
               </span>
             </div>
             <div className="flex-1 min-w-0 text-left">
-              <p className="text-sm font-medium truncate">
+              <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
                 {user?.firstName} {user?.lastName}
               </p>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-gray-400 dark:text-gray-500">
                 {user?.subscriptionTier || "Starter"} Plan
               </p>
             </div>
             <svg
-              className={`w-4 h-4 text-gray-400 transition-transform ${showAccountMenu ? "rotate-180" : ""}`}
+              className={`w-4 h-4 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${showAccountMenu ? "rotate-180" : ""}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -736,15 +919,15 @@ export default function AIPage() {
 
           {/* Account Menu Dropdown */}
           {showAccountMenu && (
-            <div className="absolute bottom-full left-3 right-3 mb-2 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-50">
+            <div className="absolute bottom-full left-3 right-3 mb-2 bg-white dark:bg-gray-800 rounded-xl shadow-lg shadow-gray-200/50 dark:shadow-gray-900/50 border border-gray-100/80 dark:border-gray-700 py-1.5 z-50">
               <button
                 onClick={() => {
                   setShowAccountMenu(false);
                   router.push("/profile");
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
               >
-                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
                 Profile
@@ -754,9 +937,9 @@ export default function AIPage() {
                   setShowAccountMenu(false);
                   router.push("/usage");
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
               >
-                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
                 Usage
@@ -766,20 +949,35 @@ export default function AIPage() {
                   setShowAccountMenu(false);
                   router.push("/subscriptions");
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm hover:bg-gray-50 transition-colors flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
               >
-                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                 </svg>
                 Subscriptions
               </button>
-              <hr className="my-1 border-gray-100" />
+              <button
+                onClick={() => setDarkMode(!darkMode)}
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
+              >
+                {darkMode ? (
+                  <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                )}
+                {darkMode ? "Light mode" : "Dark mode"}
+              </button>
+              <hr className="my-1.5 border-gray-100 dark:border-gray-700" />
               <button
                 onClick={() => {
                   setShowAccountMenu(false);
                   handleLogout();
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all duration-150 flex items-center gap-3"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -792,29 +990,29 @@ export default function AIPage() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 min-w-0 flex flex-col bg-[#fcfcfd] overflow-hidden">
+      <main className="flex-1 min-w-0 flex flex-col bg-gray-50/50 dark:bg-gray-900 overflow-hidden transition-colors duration-200">
         {/* Header */}
-        <header className="bg-white px-6 py-4 flex items-center justify-between border-b border-gray-100">
-          <div className="flex flex-col gap-0.5">
-            <h1 className="font-semibold text-base">
+        <header className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm px-6 py-4 flex items-center justify-between border-b border-gray-100/80 dark:border-gray-700/80 sticky top-0 z-10 transition-colors duration-200">
+          <div className="flex flex-col gap-1">
+            <h1 className="font-semibold text-base text-gray-900 dark:text-white">
               {selectedConversation?.title || "New Chat"}
             </h1>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setShowDatabaseModal(true)}
-                className={`text-xs hover:text-gray-600 text-left transition-colors ${
-                  selectedDatabase ? "text-gray-600" : "text-gray-400"
+                className={`text-xs hover:text-gray-700 dark:hover:text-gray-300 text-left transition-all duration-200 hover:underline underline-offset-2 ${
+                  selectedDatabase ? "text-gray-600 dark:text-gray-400" : "text-gray-400 dark:text-gray-500"
                 }`}
               >
                 {selectedDatabase
                   ? `DB: ${selectedDatabase.name}`
                   : "Select database"}
               </button>
-              <span className="text-gray-300">|</span>
+              <span className="text-gray-200 dark:text-gray-600">|</span>
               <button
                 onClick={() => setShowFilesModal(true)}
-                className={`text-xs hover:text-gray-600 text-left transition-colors ${
-                  selectedFile ? "text-gray-600" : "text-gray-400"
+                className={`text-xs hover:text-gray-700 dark:hover:text-gray-300 text-left transition-all duration-200 hover:underline underline-offset-2 ${
+                  selectedFile ? "text-gray-600 dark:text-gray-400" : "text-gray-400 dark:text-gray-500"
                 }`}
               >
                 {selectedFile
@@ -825,30 +1023,30 @@ export default function AIPage() {
           </div>
           {/* Upload indicator */}
           {isUploadingFile && (
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+              <div className="w-4 h-4 border-2 border-gray-300 dark:border-gray-600 border-t-gray-600 dark:border-t-gray-300 rounded-full animate-spin" />
               Uploading...
             </div>
           )}
         </header>
 
         {/* Chat Area */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden px-8 py-6 flex flex-col gap-6">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-8 py-6 flex flex-col gap-6 custom-scrollbar">
           {loadingMessages ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-gray-400 text-sm">Loading messages...</div>
+              <div className="text-gray-400 dark:text-gray-500 text-sm">Loading messages...</div>
             </div>
           ) : messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center max-w-md">
-                <h2 className="text-lg font-semibold mb-2">
+                <h2 className="text-lg font-semibold mb-2 text-gray-900 dark:text-white">
                   {selectedFile
                     ? `Analyzing ${selectedFile.originalFileName}`
                     : selectedDatabase
                     ? `Connected to ${selectedDatabase.name}`
                     : "Welcome to Erao"}
                 </h2>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   {selectedFile
                     ? `${selectedFile.fileType} file with ${selectedFile.rowCount?.toLocaleString() || 0} rows ready. Ask anything about your data.`
                     : selectedDatabase
@@ -859,13 +1057,13 @@ export default function AIPage() {
                   <div className="flex gap-3 justify-center mt-4">
                     <button
                       onClick={() => setShowDatabaseModal(true)}
-                      className="px-4 py-2 bg-black text-white text-sm rounded-lg hover:bg-gray-800 transition-colors"
+                      className="px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
                     >
                       Connect Database
                     </button>
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      className="px-4 py-2 bg-white text-black text-sm rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+                      className="px-4 py-2 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
                     >
                       Upload File
                     </button>
@@ -877,9 +1075,9 @@ export default function AIPage() {
             messages.filter((m) => m && m.role).map((message) => (
               <div key={message.id}>
                 {message.role === "Assistant" ? (
-                  <div className="w-[70%] max-w-[70%] bg-white rounded-2xl p-5 flex flex-col gap-3.5 shadow-sm overflow-hidden">
-                    <span className="font-semibold text-base">Erao</span>
-                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                  <div className="w-[70%] max-w-[70%] bg-white dark:bg-gray-800 rounded-2xl p-5 flex flex-col gap-3.5 shadow-sm border border-gray-100/80 dark:border-gray-700/80 overflow-hidden">
+                    <span className="font-semibold text-base text-gray-900 dark:text-white">Erao</span>
+                    <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap">
                       {stripCodeBlocks(message.content)}
                     </p>
                     {(() => {
@@ -903,14 +1101,14 @@ export default function AIPage() {
                         const otherValues = values.filter((_, idx) => idx !== mainValueIdx);
 
                         return (
-                          <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-5 mt-2">
+                          <div className="bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/30 dark:to-teal-900/30 border border-emerald-200 dark:border-emerald-700 rounded-xl p-5 mt-2">
                             {/* Main value highlight */}
                             {mainValue && (
                               <div className="mb-4">
-                                <span className="text-xs font-medium text-emerald-600 uppercase tracking-wide">
+                                <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
                                   {mainValue.label}
                                 </span>
-                                <div className="text-3xl font-bold text-gray-900 mt-1">
+                                <div className="text-3xl font-bold text-gray-900 dark:text-white mt-1">
                                   {typeof mainValue.value === "number"
                                     ? mainValue.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
                                     : String(mainValue.value)}
@@ -921,9 +1119,9 @@ export default function AIPage() {
                             {otherValues.length > 0 && (
                               <div className={`grid gap-3 ${otherValues.length > 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
                                 {otherValues.map((item, idx) => (
-                                  <div key={idx} className="bg-white/60 rounded-lg px-3 py-2">
-                                    <span className="text-xs text-gray-500 capitalize">{item.label}</span>
-                                    <div className="text-sm font-semibold text-gray-800 mt-0.5">
+                                  <div key={idx} className="bg-white/60 dark:bg-gray-800/60 rounded-lg px-3 py-2">
+                                    <span className="text-xs text-gray-500 dark:text-gray-400 capitalize">{item.label}</span>
+                                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 mt-0.5">
                                       {typeof item.value === "number"
                                         ? item.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
                                         : String(item.value)}
@@ -948,17 +1146,17 @@ export default function AIPage() {
                       );
 
                       return (
-                        <div className="bg-[#fafafc] rounded-xl overflow-hidden">
+                        <div className="bg-[#fafafc] dark:bg-gray-800 rounded-xl overflow-hidden">
                           {/* View Toggle Buttons */}
                           {hasNumericData && parsedResult.rows.length > 1 && (
-                            <div className="flex items-center justify-between p-2 border-b border-gray-200">
+                            <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "table" }))}
                                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                                     currentView === "table"
-                                      ? "bg-black text-white"
-                                      : "bg-white text-gray-600 hover:bg-gray-100"
+                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
                                   }`}
                                 >
                                   Table
@@ -967,8 +1165,8 @@ export default function AIPage() {
                                   onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "bar" }))}
                                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                                     currentView === "bar"
-                                      ? "bg-black text-white"
-                                      : "bg-white text-gray-600 hover:bg-gray-100"
+                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
                                   }`}
                                 >
                                   Bar
@@ -977,8 +1175,8 @@ export default function AIPage() {
                                   onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "line" }))}
                                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                                     currentView === "line"
-                                      ? "bg-black text-white"
-                                      : "bg-white text-gray-600 hover:bg-gray-100"
+                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
                                   }`}
                                 >
                                   Line
@@ -987,8 +1185,8 @@ export default function AIPage() {
                                   onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "pie" }))}
                                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                                     currentView === "pie"
-                                      ? "bg-black text-white"
-                                      : "bg-white text-gray-600 hover:bg-gray-100"
+                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
                                   }`}
                                 >
                                   Pie
@@ -997,8 +1195,8 @@ export default function AIPage() {
                                   onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "area" }))}
                                   className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
                                     currentView === "area"
-                                      ? "bg-black text-white"
-                                      : "bg-white text-gray-600 hover:bg-gray-100"
+                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
                                   }`}
                                 >
                                   Area
@@ -1014,7 +1212,7 @@ export default function AIPage() {
                                   });
                                   setDataViewerOpen(message.id);
                                 }}
-                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
                                 title="Open in fullscreen"
                               >
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1044,7 +1242,7 @@ export default function AIPage() {
 
                           {/* Expand button for table-only view (no numeric data or single row) */}
                           {(!hasNumericData || parsedResult.rows.length === 1) && parsedResult.rows.length > 0 && (
-                            <div className="flex justify-end p-2 border-t border-gray-200">
+                            <div className="flex justify-end p-2 border-t border-gray-200 dark:border-gray-700">
                               <button
                                 onClick={() => {
                                   setDataViewerData({
@@ -1054,7 +1252,7 @@ export default function AIPage() {
                                   });
                                   setDataViewerOpen(message.id);
                                 }}
-                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
                                 title="Open in fullscreen"
                               >
                                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1070,7 +1268,7 @@ export default function AIPage() {
                   </div>
                 ) : (
                   <div className="flex justify-end">
-                    <div className="max-w-[70%] bg-[#18181b] rounded-2xl px-[18px] py-3.5">
+                    <div className="max-w-[70%] bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl px-[18px] py-3.5 shadow-sm">
                       <p className="text-sm text-white leading-relaxed">
                         {message.content}
                       </p>
@@ -1081,21 +1279,45 @@ export default function AIPage() {
             ))
           )}
           {isSending && (
-            <div className="w-[70%] max-w-[70%] bg-white rounded-2xl p-5 shadow-sm">
-              <p className="font-semibold text-base mb-3">Erao</p>
-              <div className="flex items-center gap-3">
-                <span className="flex gap-1">
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.15s]" />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.3s]" />
-                </span>
-                <span className="text-sm text-gray-600">
-                  {loadingStage === 0 && "Thinking..."}
-                  {loadingStage === 1 && "Writing query..."}
-                  {loadingStage === 2 && "Executing..."}
-                  {loadingStage === 3 && "Formatting results..."}
-                </span>
-              </div>
+            <div className="w-[70%] max-w-[70%] bg-white dark:bg-gray-800 rounded-2xl p-5 shadow-sm border border-gray-100/80 dark:border-gray-700/80">
+              <p className="font-semibold text-base text-gray-900 dark:text-white mb-3">Erao</p>
+              {currentPhase === "writing" ? (
+                /* Writing response phase */
+                <div className="flex items-center gap-3">
+                  <span className="flex gap-1.5">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse [animation-delay:0.2s]" />
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse [animation-delay:0.4s]" />
+                  </span>
+                  <span className="text-sm text-green-600 dark:text-green-400">
+                    Writing response...
+                  </span>
+                </div>
+              ) : currentPhase === "executing" ? (
+                /* Executing query phase */
+                <div className="flex items-center gap-3">
+                  <span className="flex gap-1.5">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                    <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse [animation-delay:0.2s]" />
+                    <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse [animation-delay:0.4s]" />
+                  </span>
+                  <span className="text-sm text-blue-600 dark:text-blue-400">
+                    Running query...
+                  </span>
+                </div>
+              ) : (
+                /* Initial thinking state */
+                <div className="flex items-center gap-3">
+                  <span className="flex gap-1.5">
+                    <span className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-pulse" />
+                    <span className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-pulse [animation-delay:0.2s]" />
+                    <span className="w-2 h-2 bg-gray-400 dark:bg-gray-500 rounded-full animate-pulse [animation-delay:0.4s]" />
+                  </span>
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    Thinking...
+                  </span>
+                </div>
+              )}
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -1104,17 +1326,17 @@ export default function AIPage() {
         {/* Error Message */}
         {error && (
           <div className="px-8 pb-2">
-            <div className="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg">
+            <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm px-4 py-2 rounded-lg">
               {error}
             </div>
           </div>
         )}
 
         {/* Input Area */}
-        <div className="bg-[#fcfcfd] px-8 pt-4 pb-6 flex justify-center">
+        <div className="bg-gradient-to-t from-gray-50 dark:from-gray-900 to-transparent px-8 pt-4 pb-6 flex justify-center">
           <form
             onSubmit={handleSendMessage}
-            className="w-full max-w-[700px] h-[52px] bg-white rounded-2xl px-3 pr-2 flex items-center gap-2 shadow-sm"
+            className="w-full max-w-[700px] h-[52px] bg-white dark:bg-gray-800 rounded-2xl px-3 pr-2 flex items-center gap-2 shadow-md shadow-gray-200/50 dark:shadow-gray-900/50 border border-gray-100 dark:border-gray-700 focus-within:border-gray-200 dark:focus-within:border-gray-600 focus-within:shadow-lg focus-within:shadow-gray-200/50 dark:focus-within:shadow-gray-900/50 transition-all duration-200"
           >
             {/* File Upload Button */}
             <input
@@ -1128,10 +1350,10 @@ export default function AIPage() {
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isUploadingFile}
-              className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 hover:bg-gray-100 transition-colors disabled:opacity-50"
+              className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 hover:bg-gray-100 dark:hover:bg-gray-700 active:scale-95 transition-all duration-200 disabled:opacity-50"
               title="Upload file (Excel, Word, CSV)"
             >
-              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
               </svg>
             </button>
@@ -1142,14 +1364,14 @@ export default function AIPage() {
               onChange={(e) => setInputValue(e.target.value)}
               placeholder={selectedFile ? `Ask about ${selectedFile.originalFileName}...` : "Ask anything about your data..."}
               disabled={isSending}
-              className="flex-1 text-sm outline-none border-none focus:outline-none focus:ring-0 placeholder:text-gray-400 disabled:opacity-50"
+              className="flex-1 text-sm outline-none border-none focus:outline-none focus:ring-0 placeholder:text-gray-400 dark:placeholder:text-gray-500 disabled:opacity-50 bg-transparent text-gray-900 dark:text-white"
             />
             <button
               type="submit"
               disabled={isSending || !inputValue.trim()}
-              className="w-9 h-9 bg-[#18181b] rounded-full flex items-center justify-center flex-shrink-0 hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-9 h-9 bg-gradient-to-br from-gray-800 to-gray-900 dark:from-gray-200 dark:to-gray-300 rounded-full flex items-center justify-center flex-shrink-0 hover:from-gray-700 hover:to-gray-800 dark:hover:from-gray-100 dark:hover:to-gray-200 hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
             >
-              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-white dark:text-gray-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" />
               </svg>
             </button>
@@ -1181,6 +1403,13 @@ export default function AIPage() {
             setSchemaViewDatabaseId(id);
             setShowSchemaModal(true);
             setShowDatabaseModal(false);
+          }}
+          onDelete={(id, name) => {
+            setDeleteConfirm({
+              type: 'database',
+              id,
+              name
+            });
           }}
         />
       )}
@@ -1251,6 +1480,153 @@ export default function AIPage() {
           initialChartType={dataViewerData.chartType}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-[60]">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
+                <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-semibold text-base text-gray-900 dark:text-white">Delete {deleteConfirm.type === 'conversation' ? 'Chat' : 'Connection'}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400">This action cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-6">
+              Are you sure you want to delete <span className="font-medium text-gray-900 dark:text-white">&quot;{deleteConfirm.name}&quot;</span>?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="flex-1 h-10 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (deleteConfirm.type === 'conversation') {
+                    handleDeleteConversation(deleteConfirm.id);
+                  } else {
+                    handleDeleteDatabase(deleteConfirm.id);
+                  }
+                }}
+                className="flex-1 h-10 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Search Modal */}
+      {showSearchModal && (
+        <div
+          className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-start justify-center pt-[15vh] z-[70]"
+          onClick={() => {
+            setShowSearchModal(false);
+            setSearchQuery("");
+          }}
+        >
+          <div
+            className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-lg mx-4 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Search Input */}
+            <div className="p-4 border-b border-gray-100 dark:border-gray-700">
+              <div className="relative">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search conversations..."
+                  className="w-full h-11 bg-gray-50 dark:bg-gray-700 rounded-xl pl-10 pr-4 text-sm outline-none placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:bg-gray-100 dark:focus:bg-gray-600 transition-colors text-gray-900 dark:text-white"
+                  autoFocus
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-full"
+                  >
+                    <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Search Results */}
+            <div className="max-h-[50vh] overflow-y-auto custom-scrollbar">
+              {conversations.length === 0 ? (
+                <div className="p-8 text-center text-gray-400 dark:text-gray-500 text-sm">
+                  No conversations yet
+                </div>
+              ) : (
+                (() => {
+                  const filtered = conversations.filter((chat) =>
+                    searchQuery === "" ||
+                    (chat.title || "New Chat").toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    (chat.databaseConnectionName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    (chat.fileDocumentName || "").toLowerCase().includes(searchQuery.toLowerCase())
+                  );
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="p-8 text-center text-gray-400 dark:text-gray-500 text-sm">
+                        No results found for &quot;{searchQuery}&quot;
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((chat) => (
+                    <button
+                      key={chat.id}
+                      onClick={() => {
+                        selectConversation(chat.id);
+                        setShowSearchModal(false);
+                        setSearchQuery("");
+                      }}
+                      className={`w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-50 dark:border-gray-700 last:border-b-0 ${
+                        chat.id === selectedConversationId ? "bg-gray-50 dark:bg-gray-700" : ""
+                      }`}
+                    >
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                        {chat.title || "New Chat"}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-400 dark:text-gray-500">
+                        {(chat.databaseConnectionName || chat.fileDocumentName) && (
+                          <>
+                            <span className="truncate max-w-[150px]">
+                              {chat.databaseConnectionName || chat.fileDocumentName}
+                            </span>
+                            <span>·</span>
+                          </>
+                        )}
+                        <span className="whitespace-nowrap">{formatRelativeTime(chat.updatedAt)}</span>
+                      </div>
+                    </button>
+                  ));
+                })()
+              )}
+            </div>
+
+            {/* Footer hint */}
+            <div className="px-4 py-3 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-100 dark:border-gray-700">
+              <p className="text-xs text-gray-400 dark:text-gray-500 text-center">
+                Press <kbd className="px-1.5 py-0.5 bg-white dark:bg-gray-600 rounded border border-gray-200 dark:border-gray-500 text-gray-500 dark:text-gray-300">Esc</kbd> to close
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1263,6 +1639,7 @@ function DatabaseModal({
   onClose,
   onAddNew,
   onViewSchema,
+  onDelete,
 }: {
   databases: DatabaseConnection[];
   selectedDatabaseId: string | null;
@@ -1270,14 +1647,15 @@ function DatabaseModal({
   onClose: () => void;
   onAddNew: () => void;
   onViewSchema: (id: string) => void;
+  onDelete: (id: string, name: string) => void;
 }) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-        <h2 className="text-lg font-semibold mb-4">Select Database</h2>
-        <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-md">
+        <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-white">Select Database</h2>
+        <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto custom-scrollbar">
           {databases.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-4">
+            <p className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
               No databases connected yet
             </p>
           ) : (
@@ -1286,8 +1664,8 @@ function DatabaseModal({
                 key={db.id}
                 className={`p-3 rounded-xl transition-colors ${
                   db.id === selectedDatabaseId
-                    ? "bg-black text-white"
-                    : "bg-[#f5f5f5] hover:bg-gray-200"
+                    ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900"
+                    : "bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600"
                 }`}
               >
                 <button
@@ -1299,41 +1677,59 @@ function DatabaseModal({
                     <p
                       className={`text-xs ${
                         db.id === selectedDatabaseId
-                          ? "text-gray-300"
-                          : "text-gray-500"
+                          ? "text-gray-300 dark:text-gray-600"
+                          : "text-gray-500 dark:text-gray-400"
                       }`}
                     >
                       {db.databaseType}
                     </p>
                   </div>
-                  {db.isActive && (
+                  {db.lastTestedAt && (
                     <span
                       className={`text-xs ${
                         db.id === selectedDatabaseId
-                          ? "text-green-300"
-                          : "text-green-600"
+                          ? db.isActive ? "text-green-300 dark:text-green-600" : "text-red-300 dark:text-red-600"
+                          : db.isActive ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"
                       }`}
                     >
-                      Active
+                      {db.isActive ? "Active" : "Inactive"}
                     </span>
                   )}
                 </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onViewSchema(db.id);
-                  }}
-                  className={`mt-2 w-full text-xs py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors ${
-                    db.id === selectedDatabaseId
-                      ? "bg-white/20 hover:bg-white/30 text-white"
-                      : "bg-white hover:bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-                  </svg>
-                  View Schema
-                </button>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onViewSchema(db.id);
+                    }}
+                    className={`flex-1 text-xs py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors ${
+                      db.id === selectedDatabaseId
+                        ? "bg-white/20 dark:bg-gray-200 hover:bg-white/30 dark:hover:bg-gray-300 text-white dark:text-gray-700"
+                        : "bg-white dark:bg-gray-600 hover:bg-gray-100 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200"
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                    </svg>
+                    Schema
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(db.id, db.name);
+                    }}
+                    className={`text-xs py-1.5 px-3 rounded-lg flex items-center justify-center gap-1.5 transition-colors ${
+                      db.id === selectedDatabaseId
+                        ? "bg-red-500/30 dark:bg-red-100 hover:bg-red-500/50 dark:hover:bg-red-200 text-white dark:text-red-600"
+                        : "bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400"
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Delete
+                  </button>
+                </div>
               </div>
             ))
           )}
@@ -1341,13 +1737,13 @@ function DatabaseModal({
         <div className="flex gap-3 mt-4">
           <button
             onClick={onAddNew}
-            className="flex-1 h-10 bg-[#f5f5f5] text-black rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+            className="flex-1 h-10 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           >
             Add New
           </button>
           <button
             onClick={onClose}
-            className="flex-1 h-10 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+            className="flex-1 h-10 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
           >
             Done
           </button>
@@ -1511,17 +1907,17 @@ function AddDatabaseModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl">
+    <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto custom-scrollbar shadow-2xl">
         {/* Header */}
-        <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900">Connect Database</h2>
-            <p className="text-sm text-gray-500 mt-0.5">Add a new database connection to start querying</p>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Connect Database</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Add a new database connection to start querying</p>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1532,7 +1928,7 @@ function AddDatabaseModal({
         <div className="px-6 py-5">
           {/* Database Type Selection */}
           <div className="mb-6">
-            <label className="text-sm font-medium text-gray-700 mb-3 block">Select Database Type</label>
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 block">Select Database Type</label>
             <div className="grid grid-cols-4 gap-3">
               {databaseTypes.map((type) => (
                 <button
@@ -1541,13 +1937,13 @@ function AddDatabaseModal({
                   onClick={() => handleDatabaseTypeSelect(type.value)}
                   className={`relative flex flex-col items-center p-4 rounded-xl border-2 transition-all ${
                     formData.databaseType === type.value
-                      ? "border-gray-900 bg-gray-50 shadow-sm"
-                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                      ? "border-gray-900 dark:border-white bg-gray-50 dark:bg-gray-700 shadow-sm"
+                      : "border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700"
                   }`}
                 >
                   {formData.databaseType === type.value && (
-                    <div className="absolute top-2 right-2 w-4 h-4 bg-gray-900 rounded-full flex items-center justify-center">
-                      <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="absolute top-2 right-2 w-4 h-4 bg-gray-900 dark:bg-white rounded-full flex items-center justify-center">
+                      <svg className="w-2.5 h-2.5 text-white dark:text-gray-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                       </svg>
                     </div>
@@ -1555,12 +1951,12 @@ function AddDatabaseModal({
                   <div className="mb-2">
                     <img src={databaseLogos[type.value]} alt={type.label} className="w-9 h-9 object-contain" />
                   </div>
-                  <span className="text-xs font-medium text-gray-700">{type.label}</span>
+                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{type.label}</span>
                 </button>
               ))}
             </div>
             {currentDbType && (
-              <p className="text-xs text-gray-500 mt-2 text-center">{currentDbType.description}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">{currentDbType.description}</p>
             )}
           </div>
 
@@ -1568,72 +1964,72 @@ function AddDatabaseModal({
           <div className="space-y-4">
             {/* Connection Name */}
             <div>
-              <label className="text-sm font-medium text-gray-700 mb-1.5 block">Connection Name</label>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">Connection Name</label>
               <input
                 type="text"
                 value={formData.name}
                 onChange={(e) => handleFieldChange("name", e.target.value)}
                 placeholder="My Production Database"
-                className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                className="w-full h-11 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 dark:focus:border-gray-500 focus:bg-white dark:focus:bg-gray-600 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
               />
             </div>
 
             {/* Host & Port */}
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
-                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Host</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">Host</label>
                 <input
                   type="text"
                   value={formData.host}
                   onChange={(e) => handleFieldChange("host", e.target.value)}
                   placeholder={currentDbType?.placeholder || "db.example.com"}
-                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                  className="w-full h-11 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 dark:focus:border-gray-500 focus:bg-white dark:focus:bg-gray-600 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                 />
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Port</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">Port</label>
                 <input
                   type="text"
                   inputMode="numeric"
                   value={portInput}
                   onChange={(e) => handlePortChange(e.target.value)}
-                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                  className="w-full h-11 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 dark:focus:border-gray-500 focus:bg-white dark:focus:bg-gray-600 text-gray-900 dark:text-white"
                 />
               </div>
             </div>
 
             {/* Database Name */}
             <div>
-              <label className="text-sm font-medium text-gray-700 mb-1.5 block">Database Name</label>
+              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">Database Name</label>
               <input
                 type="text"
                 value={formData.databaseName}
                 onChange={(e) => handleFieldChange("databaseName", e.target.value)}
                 placeholder="production_db"
-                className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                className="w-full h-11 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 dark:focus:border-gray-500 focus:bg-white dark:focus:bg-gray-600 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
               />
             </div>
 
             {/* Credentials */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Username</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">Username</label>
                 <input
                   type="text"
                   value={formData.username}
                   onChange={(e) => handleFieldChange("username", e.target.value)}
                   placeholder="admin"
-                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                  className="w-full h-11 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 dark:focus:border-gray-500 focus:bg-white dark:focus:bg-gray-600 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                 />
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1.5 block">Password</label>
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5 block">Password</label>
                 <input
                   type="password"
                   value={formData.password}
                   onChange={(e) => handleFieldChange("password", e.target.value)}
                   placeholder="••••••••"
-                  className="w-full h-11 bg-gray-50 border border-gray-200 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 focus:bg-white"
+                  className="w-full h-11 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl px-4 text-sm outline-none transition-all focus:border-gray-400 dark:focus:border-gray-500 focus:bg-white dark:focus:bg-gray-600 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                 />
               </div>
             </div>
@@ -1643,31 +2039,31 @@ function AddDatabaseModal({
           {(testResult || error) && (
             <div className={`mt-5 p-4 rounded-xl flex items-center gap-3 ${
               testResult === "success"
-                ? "bg-green-50 border border-green-200"
-                : "bg-red-50 border border-red-200"
+                ? "bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800"
+                : "bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800"
             }`}>
               {testResult === "success" ? (
                 <>
-                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
-                    <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="w-10 h-10 bg-green-100 dark:bg-green-900/50 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-green-800">Connection successful!</p>
-                    <p className="text-xs text-green-600">Ready to connect to your {currentDbType?.label} database</p>
+                    <p className="text-sm font-medium text-green-800 dark:text-green-300">Connection successful!</p>
+                    <p className="text-xs text-green-600 dark:text-green-400">Ready to connect to your {currentDbType?.label} database</p>
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
-                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="w-10 h-10 bg-red-100 dark:bg-red-900/50 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-red-800">Connection failed</p>
-                    <p className="text-xs text-red-600">{error || "Please check your credentials"}</p>
+                    <p className="text-sm font-medium text-red-800 dark:text-red-300">Connection failed</p>
+                    <p className="text-xs text-red-600 dark:text-red-400">{error || "Please check your credentials"}</p>
                   </div>
                 </>
               )}
@@ -1676,11 +2072,11 @@ function AddDatabaseModal({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-2xl flex gap-3">
+        <div className="px-6 py-4 bg-gray-50 dark:bg-gray-900 border-t border-gray-100 dark:border-gray-700 rounded-b-2xl flex gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="px-5 h-11 text-gray-600 text-sm font-medium hover:text-gray-800 transition-colors"
+            className="px-5 h-11 text-gray-600 dark:text-gray-400 text-sm font-medium hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
           >
             Cancel
           </button>
@@ -1689,11 +2085,11 @@ function AddDatabaseModal({
             type="button"
             onClick={handleTest}
             disabled={isTesting || !formData.host || !formData.databaseName || !formData.username || !formData.name}
-            className="px-6 h-11 bg-white border border-gray-300 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="px-6 h-11 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-xl text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {isTesting ? (
               <>
-                <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-gray-300 dark:border-gray-500 border-t-gray-600 dark:border-t-gray-300 rounded-full animate-spin" />
                 Testing...
               </>
             ) : (
@@ -1706,8 +2102,8 @@ function AddDatabaseModal({
             disabled={!testPassed || isLoading}
             className={`px-6 h-11 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
               testPassed
-                ? "bg-gray-900 text-white hover:bg-gray-800"
-                : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100"
+                : "bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed"
             }`}
           >
             {isLoading ? (
@@ -1746,13 +2142,13 @@ function FilesModal({
   getFileIcon: (fileType: string) => React.ReactNode;
 }) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-lg">
+    <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-lg">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Your Files</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Your Files</h2>
           <button
             onClick={onUpload}
-            className="flex items-center gap-2 px-3 py-1.5 bg-black text-white text-sm rounded-lg hover:bg-gray-800 transition-colors"
+            className="flex items-center gap-2 px-3 py-1.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-sm rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -1761,14 +2157,14 @@ function FilesModal({
           </button>
         </div>
 
-        <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto">
+        <div className="flex flex-col gap-2 max-h-[400px] overflow-y-auto custom-scrollbar">
           {files.length === 0 ? (
             <div className="text-center py-8">
-              <svg className="w-12 h-12 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              <p className="text-sm text-gray-500 mb-2">No files uploaded yet</p>
-              <p className="text-xs text-gray-400">
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">No files uploaded yet</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
                 Upload Excel, Word, CSV, or other files to analyze
               </p>
             </div>
@@ -1778,13 +2174,13 @@ function FilesModal({
                 key={file.id}
                 className={`p-3 rounded-xl flex items-center gap-3 transition-colors cursor-pointer ${
                   file.id === selectedFileId
-                    ? "bg-black text-white"
-                    : "bg-[#f5f5f5] hover:bg-gray-200"
+                    ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900"
+                    : "bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600"
                 }`}
                 onClick={() => onSelect(file.id)}
               >
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                  file.id === selectedFileId ? "bg-white/20" : "bg-white"
+                  file.id === selectedFileId ? "bg-white/20 dark:bg-gray-900/20" : "bg-white dark:bg-gray-600"
                 }`}>
                   {getFileIcon(file.fileType)}
                 </div>
@@ -1793,7 +2189,7 @@ function FilesModal({
                     {file.originalFileName}
                   </p>
                   <div className={`flex items-center gap-2 text-xs ${
-                    file.id === selectedFileId ? "text-gray-300" : "text-gray-500"
+                    file.id === selectedFileId ? "text-gray-300 dark:text-gray-600" : "text-gray-500 dark:text-gray-400"
                   }`}>
                     <span>{file.fileType}</span>
                     <span>•</span>
@@ -1809,19 +2205,19 @@ function FilesModal({
                 <div className="flex items-center gap-2">
                   {file.status === "Completed" ? (
                     <span className={`text-xs ${
-                      file.id === selectedFileId ? "text-green-300" : "text-green-600"
+                      file.id === selectedFileId ? "text-green-300 dark:text-green-600" : "text-green-600 dark:text-green-400"
                     }`}>
                       Ready
                     </span>
                   ) : file.status === "Processing" ? (
                     <span className={`text-xs ${
-                      file.id === selectedFileId ? "text-yellow-300" : "text-yellow-600"
+                      file.id === selectedFileId ? "text-yellow-300 dark:text-yellow-600" : "text-yellow-600 dark:text-yellow-400"
                     }`}>
                       Processing...
                     </span>
                   ) : file.status === "Failed" ? (
                     <span className={`text-xs ${
-                      file.id === selectedFileId ? "text-red-300" : "text-red-600"
+                      file.id === selectedFileId ? "text-red-300 dark:text-red-600" : "text-red-600 dark:text-red-400"
                     }`}>
                       Failed
                     </span>
@@ -1831,8 +2227,8 @@ function FilesModal({
                       e.stopPropagation();
                       onDelete(file.id);
                     }}
-                    className={`p-1 rounded hover:bg-black/10 transition-colors ${
-                      file.id === selectedFileId ? "text-white/70 hover:text-white" : "text-gray-400 hover:text-gray-600"
+                    className={`p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors ${
+                      file.id === selectedFileId ? "text-white/70 dark:text-gray-600 hover:text-white dark:hover:text-gray-900" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
                     }`}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1848,13 +2244,13 @@ function FilesModal({
         <div className="flex gap-3 mt-4">
           <button
             onClick={() => onSelect("")}
-            className="flex-1 h-10 bg-[#f5f5f5] text-black rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+            className="flex-1 h-10 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           >
             Clear Selection
           </button>
           <button
             onClick={onClose}
-            className="flex-1 h-10 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+            className="flex-1 h-10 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors"
           >
             Done
           </button>
@@ -1921,30 +2317,30 @@ function SchemaViewerModal({
   );
 
   return (
-    <div className={`fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${isFullscreen ? 'p-0' : 'p-4'}`}>
-      <div className={`bg-white flex flex-col transition-all duration-300 ${
+    <div className={`fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 ${isFullscreen ? 'p-0' : 'p-4'}`}>
+      <div className={`bg-white dark:bg-gray-800 flex flex-col transition-all duration-300 ${
         isFullscreen
           ? 'w-full h-full rounded-none'
           : 'rounded-2xl w-full max-w-6xl max-h-[90vh]'
       }`}>
         {/* Header */}
-        <div className={`border-b border-gray-100 ${isFullscreen ? 'p-4' : 'p-6'}`}>
+        <div className={`border-b border-gray-100 dark:border-gray-700 ${isFullscreen ? 'p-4' : 'p-6'}`}>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold">{databaseName}</h2>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{databaseName}</h2>
               {schema && (
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   {schema.databaseType} • {(schema.tables || []).length} tables
                 </p>
               )}
             </div>
             <div className="flex items-center gap-3">
               {/* View Mode Toggle */}
-              <div className="flex bg-gray-100 rounded-lg p-1">
+              <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
                 <button
                   onClick={() => setViewMode("diagram")}
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    viewMode === "diagram" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                    viewMode === "diagram" ? "bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                   }`}
                 >
                   Diagram
@@ -1952,7 +2348,7 @@ function SchemaViewerModal({
                 <button
                   onClick={() => setViewMode("list")}
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    viewMode === "list" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                    viewMode === "list" ? "bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                   }`}
                 >
                   List
@@ -1961,24 +2357,24 @@ function SchemaViewerModal({
               {/* Fullscreen Toggle */}
               <button
                 onClick={() => setIsFullscreen(!isFullscreen)}
-                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 title={isFullscreen ? "Exit fullscreen" : "Open sandbox mode"}
               >
                 {isFullscreen ? (
-                  <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" />
                   </svg>
                 ) : (
-                  <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
                   </svg>
                 )}
               </button>
               <button
                 onClick={onClose}
-                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
-                <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -1991,9 +2387,9 @@ function SchemaViewerModal({
                 placeholder="Search tables and columns..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full h-10 bg-gray-50 border border-gray-200 rounded-xl pl-10 pr-4 text-sm outline-none focus:border-gray-400 focus:bg-white transition-all"
+                className="w-full h-10 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-xl pl-10 pr-4 text-sm outline-none focus:border-gray-400 dark:focus:border-gray-500 focus:bg-white dark:focus:bg-gray-600 transition-all text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
               />
-              <svg className="w-4 h-4 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
             </div>
@@ -2004,14 +2400,14 @@ function SchemaViewerModal({
         <div className={`flex-1 ${viewMode === "diagram" ? "overflow-hidden" : "overflow-y-auto custom-scrollbar"}`}>
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <div className="w-8 h-8 border-2 border-gray-200 border-t-gray-800 rounded-full animate-spin" />
+              <div className="w-8 h-8 border-2 border-gray-200 dark:border-gray-600 border-t-gray-800 dark:border-t-white rounded-full animate-spin" />
             </div>
           ) : error ? (
             <div className="text-center py-12">
-              <p className="text-red-500">{error}</p>
+              <p className="text-red-500 dark:text-red-400">{error}</p>
             </div>
           ) : (schema?.tables || []).length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
+            <div className="text-center py-12 text-gray-500 dark:text-gray-400">
               No tables found
             </div>
           ) : viewMode === "diagram" ? (
@@ -2019,7 +2415,7 @@ function SchemaViewerModal({
           ) : (
             <div className="p-6">
               {filteredTables.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
+                <div className="text-center py-12 text-gray-500 dark:text-gray-400">
                   No tables match your search
                 </div>
               ) : (
@@ -2202,10 +2598,25 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
     return headerHeight + (colIndex + 0.5) * columnHeight;
   };
 
+  // Check for dark mode
+  const [isDark, setIsDark] = useState(false);
+  useEffect(() => {
+    const checkDarkMode = () => {
+      setIsDark(document.documentElement.classList.contains("dark"));
+    };
+    checkDarkMode();
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 ${
+      className={`relative w-full h-full overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 ${
         isPanning ? 'cursor-grabbing' : dragging ? 'cursor-grabbing' : 'cursor-grab'
       }`}
       onMouseDown={handleCanvasMouseDown}
@@ -2219,17 +2630,17 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
       <div
         className="absolute inset-0 pointer-events-none opacity-30"
         style={{
-          backgroundImage: `radial-gradient(circle, #cbd5e1 1px, transparent 1px)`,
+          backgroundImage: `radial-gradient(circle, ${isDark ? '#4b5563' : '#cbd5e1'} 1px, transparent 1px)`,
           backgroundSize: `${20 * scale}px ${20 * scale}px`,
           backgroundPosition: `${pan.x}px ${pan.y}px`,
         }}
       />
 
       {/* Zoom Controls */}
-      <div className="absolute top-4 right-4 z-10 flex gap-2 bg-white/80 backdrop-blur-sm rounded-xl p-2 shadow-lg border border-gray-200">
+      <div className="absolute top-4 right-4 z-10 flex gap-2 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-xl p-2 shadow-lg border border-gray-200 dark:border-gray-700">
         <button
           onClick={zoomIn}
-          className="w-8 h-8 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors"
+          className="w-8 h-8 bg-white dark:bg-gray-700 rounded-lg shadow-sm border border-gray-200 dark:border-gray-600 flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors text-gray-700 dark:text-gray-200"
           title="Zoom in"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2238,21 +2649,21 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
         </button>
         <button
           onClick={zoomOut}
-          className="w-8 h-8 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-center hover:bg-gray-50 transition-colors"
+          className="w-8 h-8 bg-white dark:bg-gray-700 rounded-lg shadow-sm border border-gray-200 dark:border-gray-600 flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors text-gray-700 dark:text-gray-200"
           title="Zoom out"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
           </svg>
         </button>
-        <div className="w-px bg-gray-200" />
-        <span className="flex items-center px-2 text-xs text-gray-500 font-medium min-w-[50px] justify-center">
+        <div className="w-px bg-gray-200 dark:bg-gray-600" />
+        <span className="flex items-center px-2 text-xs text-gray-500 dark:text-gray-400 font-medium min-w-[50px] justify-center">
           {Math.round(scale * 100)}%
         </span>
-        <div className="w-px bg-gray-200" />
+        <div className="w-px bg-gray-200 dark:bg-gray-600" />
         <button
           onClick={() => { setScale(0.8); setPan({ x: 0, y: 0 }); }}
-          className="px-3 h-8 bg-white rounded-lg shadow-sm border border-gray-200 flex items-center justify-center hover:bg-gray-50 text-xs font-medium transition-colors"
+          className="px-3 h-8 bg-white dark:bg-gray-700 rounded-lg shadow-sm border border-gray-200 dark:border-gray-600 flex items-center justify-center hover:bg-gray-50 dark:hover:bg-gray-600 text-xs font-medium transition-colors text-gray-700 dark:text-gray-200"
           title="Reset view"
         >
           Fit
@@ -2260,7 +2671,7 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
       </div>
 
       {/* Instructions hint */}
-      <div className="absolute top-4 left-4 z-10 text-xs text-gray-500 bg-white/80 backdrop-blur-sm rounded-lg px-3 py-2 shadow-sm border border-gray-200">
+      <div className="absolute top-4 left-4 z-10 text-xs text-gray-500 dark:text-gray-400 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-lg px-3 py-2 shadow-sm border border-gray-200 dark:border-gray-700">
         <span className="font-medium">Tip:</span> Drag tables to arrange • Scroll to pan • Pinch to zoom
       </div>
 
@@ -2363,7 +2774,7 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
           return (
             <div
               key={table.name}
-              className="erd-table absolute bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden select-none"
+              className="erd-table absolute bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden select-none"
               style={{
                 left: pos.x,
                 top: pos.y,
@@ -2373,7 +2784,7 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
               onMouseDown={(e) => handleMouseDown(table.name, e)}
             >
               {/* Table Header */}
-              <div className="bg-gray-900 text-white px-3 py-2 flex items-center gap-2">
+              <div className="bg-gray-900 dark:bg-gray-700 text-white px-3 py-2 flex items-center gap-2">
                 <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
@@ -2384,13 +2795,13 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
               </div>
               {/* Columns */}
               <div
-                className="divide-y divide-gray-100 max-h-48 overflow-y-auto erd-scrollbar"
+                className="divide-y divide-gray-100 dark:divide-gray-700 max-h-48 overflow-y-auto erd-scrollbar bg-white dark:bg-gray-800"
                 onWheel={(e) => e.stopPropagation()}
               >
                 {table.columns.map(column => (
                   <div
                     key={column.name}
-                    className="px-3 py-1.5 flex items-center gap-2 text-xs hover:bg-gray-50"
+                    className="px-3 py-1.5 flex items-center gap-2 text-xs hover:bg-gray-50 dark:hover:bg-gray-700"
                   >
                     <div className="w-4 flex justify-center">
                       {pkColumns.has(column.name) ? (
@@ -2402,10 +2813,10 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                         </svg>
                       ) : (
-                        <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-500" />
                       )}
                     </div>
-                    <span className="font-medium text-gray-700 truncate flex-1">{column.name}</span>
+                    <span className="font-medium text-gray-700 dark:text-gray-200 truncate flex-1">{column.name}</span>
                     <span className="text-gray-400 font-mono text-[10px]">{column.dataType}</span>
                   </div>
                 ))}
@@ -2416,23 +2827,23 @@ function ERDiagramView({ tables }: { tables: TableSchema[] }) {
       </div>
 
       {/* Legend */}
-      <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-sm border border-gray-200 px-3 py-2">
+      <div className="absolute bottom-4 left-4 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 px-3 py-2">
         <div className="flex gap-4 text-xs">
           <div className="flex items-center gap-1.5">
             <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12.65 10A5.99 5.99 0 007 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 005.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/>
             </svg>
-            <span className="text-gray-600">Primary Key</span>
+            <span className="text-gray-600 dark:text-gray-300">Primary Key</span>
           </div>
           <div className="flex items-center gap-1.5">
             <svg className="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
             </svg>
-            <span className="text-gray-600">Foreign Key</span>
+            <span className="text-gray-600 dark:text-gray-300">Foreign Key</span>
           </div>
           <div className="flex items-center gap-1.5">
             <div className="w-6 h-0.5 bg-indigo-500 rounded" />
-            <span className="text-gray-600">Relationship</span>
+            <span className="text-gray-600 dark:text-gray-300">Relationship</span>
           </div>
         </div>
       </div>
@@ -2460,16 +2871,16 @@ function TableCard({
     const regex = new RegExp(`(${searchQuery})`, 'gi');
     const parts = text.split(regex);
     return parts.map((part, i) =>
-      regex.test(part) ? <mark key={i} className="bg-yellow-200 rounded px-0.5">{part}</mark> : part
+      regex.test(part) ? <mark key={i} className="bg-yellow-200 dark:bg-yellow-500/30 dark:text-yellow-200 rounded px-0.5">{part}</mark> : part
     );
   };
 
   return (
-    <div className="border border-gray-200 rounded-xl overflow-hidden">
+    <div className="border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden bg-white dark:bg-gray-800">
       {/* Table Header */}
       <button
         onClick={onToggle}
-        className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+        className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-800 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
       >
         <div className="flex items-center gap-3">
           <svg
@@ -2481,29 +2892,29 @@ function TableCard({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
           <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
             </svg>
-            <span className="font-medium text-sm">{highlightMatch(table.name)}</span>
+            <span className="font-medium text-sm text-gray-900 dark:text-white">{highlightMatch(table.name)}</span>
           </div>
         </div>
-        <div className="flex items-center gap-3 text-xs text-gray-500">
+        <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
           <span>{table.columns.length} columns</span>
           {table.rowCount !== null && (
             <span>{table.rowCount.toLocaleString()} rows</span>
           )}
           {table.primaryKeys.length > 0 && (
-            <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded">
+            <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded">
               {table.primaryKeys.length} PK
             </span>
           )}
           {table.foreignKeys.length > 0 && (
-            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">
+            <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded">
               {table.foreignKeys.length} FK
             </span>
           )}
           {table.indexes.length > 0 && (
-            <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">
+            <span className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded">
               {table.indexes.length} IDX
             </span>
           )}
@@ -2512,13 +2923,13 @@ function TableCard({
 
       {/* Table Content */}
       {isExpanded && (
-        <div className="border-t border-gray-200">
+        <div className="border-t border-gray-200 dark:border-gray-700">
           {/* Columns */}
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-gray-100 dark:divide-gray-700">
             {table.columns.map((column) => (
               <div
                 key={column.name}
-                className="px-4 py-2.5 flex items-center justify-between hover:bg-gray-50"
+                className="px-4 py-2.5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700"
               >
                 <div className="flex items-center gap-3">
                   <div className="w-5 flex justify-center">
@@ -2531,21 +2942,21 @@ function TableCard({
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                       </svg>
                     ) : (
-                      <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />
+                      <div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-500" />
                     )}
                   </div>
-                  <span className="text-sm font-medium">{highlightMatch(column.name)}</span>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">{highlightMatch(column.name)}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-0.5 rounded">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">
                     {column.dataType}
                     {column.maxLength && `(${column.maxLength})`}
                   </span>
                   {column.isIdentity && (
-                    <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded">AUTO</span>
+                    <span className="text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30 px-1.5 py-0.5 rounded">AUTO</span>
                   )}
                   {!column.isNullable && (
-                    <span className="text-xs text-red-600 bg-red-50 px-1.5 py-0.5 rounded">NOT NULL</span>
+                    <span className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 rounded">NOT NULL</span>
                   )}
                 </div>
               </div>
@@ -2554,18 +2965,18 @@ function TableCard({
 
           {/* Foreign Keys Section */}
           {table.foreignKeys.length > 0 && (
-            <div className="border-t border-gray-200 bg-blue-50/50 px-4 py-3">
-              <p className="text-xs font-medium text-blue-700 mb-2">Foreign Keys</p>
+            <div className="border-t border-gray-200 dark:border-gray-700 bg-blue-50/50 dark:bg-blue-900/20 px-4 py-3">
+              <p className="text-xs font-medium text-blue-700 dark:text-blue-400 mb-2">Foreign Keys</p>
               <div className="space-y-1.5">
                 {table.foreignKeys.map((fk, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-xs text-gray-600">
-                    <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-blue-200">
+                  <div key={idx} className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                    <span className="font-mono bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-700">
                       {fk.column}
                     </span>
                     <svg className="w-3 h-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                     </svg>
-                    <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-blue-200">
+                    <span className="font-mono bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-700">
                       {fk.referencedTable}.{fk.referencedColumn}
                     </span>
                     {(fk.onDelete || fk.onUpdate) && (
@@ -2583,21 +2994,21 @@ function TableCard({
 
           {/* Indexes Section */}
           {table.indexes.length > 0 && (
-            <div className="border-t border-gray-200 bg-purple-50/50 px-4 py-3">
-              <p className="text-xs font-medium text-purple-700 mb-2">Indexes</p>
+            <div className="border-t border-gray-200 dark:border-gray-700 bg-purple-50/50 dark:bg-purple-900/20 px-4 py-3">
+              <p className="text-xs font-medium text-purple-700 dark:text-purple-400 mb-2">Indexes</p>
               <div className="space-y-1.5">
                 {table.indexes.map((index, idx) => (
-                  <div key={idx} className="flex items-center gap-2 text-xs text-gray-600">
+                  <div key={idx} className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
                     <span className="font-medium">{index.name}</span>
                     <span className="text-gray-400">on</span>
-                    <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-purple-200">
+                    <span className="font-mono bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-700">
                       {index.columns.join(', ')}
                     </span>
                     {index.isUnique && (
-                      <span className="text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded">UNIQUE</span>
+                      <span className="text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded">UNIQUE</span>
                     )}
                     {index.isClustered && (
-                      <span className="text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded">CLUSTERED</span>
+                      <span className="text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 rounded">CLUSTERED</span>
                     )}
                   </div>
                 ))}
