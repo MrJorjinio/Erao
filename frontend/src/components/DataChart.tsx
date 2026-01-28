@@ -163,15 +163,31 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
       return null;
     }
 
-    // Simple logic: AI ensures first column is label, rest are values
-    // The backend AI is instructed to order data properly for visualization
-    const labelColumn = columns[0];
-    const dataColumns = columns.slice(1).filter(col =>
+    // Find all numeric columns (check all columns, not just after first)
+    const numericColumns = columns.filter(col =>
       data.some(row => {
         const val = row[col];
-        return typeof val === "number" || !isNaN(Number(val));
+        if (val === null || val === undefined || val === '') return false;
+        if (typeof val === "number") return true;
+        const numVal = Number(val);
+        return !isNaN(numVal) && isFinite(numVal);
       })
     );
+
+    // Find first non-numeric column to use as label, or use first column
+    const nonNumericColumns = columns.filter(col => !numericColumns.includes(col));
+    const labelColumn = nonNumericColumns.length > 0 ? nonNumericColumns[0] : columns[0];
+
+    // Use numeric columns as data columns, excluding the label column if it was numeric
+    const dataColumns = numericColumns.filter(col => col !== labelColumn);
+
+    // If no data columns found but we have numeric columns, use all except first as data
+    // and first as label (fallback for all-numeric data)
+    const finalDataColumns = dataColumns.length > 0
+      ? dataColumns
+      : numericColumns.length > 1
+        ? numericColumns.slice(1)
+        : numericColumns;
 
     const isLargeDataset = data.length > 50;
 
@@ -180,18 +196,18 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
 
     if (chartType === "line" || chartType === "area") {
       // For line/area, sample data to show trends
-      chartData = sampleData(data, labelColumn, dataColumns, 100);
+      chartData = sampleData(data, labelColumn, finalDataColumns, 100);
     } else {
       // For bar/pie, aggregate data
       chartData = isLargeDataset
-        ? aggregateData(data, labelColumn, dataColumns, chartType === "pie" ? 10 : 30)
+        ? aggregateData(data, labelColumn, finalDataColumns, chartType === "pie" ? 10 : 30)
         : data.map((row) => {
             const fullName = String(row[labelColumn] ?? "");
             const item: Record<string, unknown> = {
               name: truncateLabel(fullName),
               fullName: fullName,
             };
-            dataColumns.forEach((col) => {
+            finalDataColumns.forEach((col) => {
               const val = row[col];
               item[col] = typeof val === "number" ? val : Number(val) || 0;
             });
@@ -200,21 +216,21 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
     }
 
     const hasNonZeroValues = chartData.some((item) =>
-      dataColumns.some((col) => (item[col] as number) > 0)
+      finalDataColumns.some((col) => (item[col] as number) > 0)
     );
 
     // Prepare pie data
     let pieData: Array<{ name: string; fullName: string; value: number; fill: string }> = [];
     if (chartType === "pie") {
-      if (dataColumns.length === 1) {
+      if (finalDataColumns.length === 1) {
         pieData = chartData.map((item, index) => ({
           name: item.name as string,
           fullName: item.fullName as string,
-          value: item[dataColumns[0]] as number,
+          value: item[finalDataColumns[0]] as number,
           fill: COLORS[index % COLORS.length],
         }));
       } else {
-        pieData = dataColumns.map((col, index) => ({
+        pieData = finalDataColumns.map((col, index) => ({
           name: col,
           fullName: col,
           value: chartData.reduce((sum, item) => sum + (item[col] as number), 0),
@@ -227,7 +243,7 @@ export function DataChart({ data, columns, chartType }: DataChartProps) {
 
     return {
       chartData,
-      dataColumns,
+      dataColumns: finalDataColumns,
       pieData,
       hasNonZeroValues,
       isLargeDataset,

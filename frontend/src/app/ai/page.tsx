@@ -38,22 +38,38 @@ function stripCodeBlocks(content: string): string {
 }
 
 // Helper to safely parse queryResult (can be string, object, or null)
-function parseQueryResult(queryResult: QueryResult | string | null): QueryResult | null {
+// Returns array of QueryResult for multi-table support
+function parseQueryResult(queryResult: QueryResult | string | null): QueryResult[] | null {
   if (!queryResult) return null;
+
+  let parsed: unknown = queryResult;
   if (typeof queryResult === "string") {
     try {
-      const parsed = JSON.parse(queryResult);
-      if (parsed && Array.isArray(parsed.rows) && Array.isArray(parsed.columns)) {
-        return parsed as QueryResult;
-      }
-      return null;
+      parsed = JSON.parse(queryResult);
     } catch {
       return null;
     }
   }
-  if (typeof queryResult === "object" && Array.isArray(queryResult.rows)) {
-    return queryResult;
+
+  // Check for multi-table format: { tables: [...] }
+  if (parsed && typeof parsed === "object" && "tables" in parsed) {
+    const tablesData = (parsed as { tables: unknown[] }).tables;
+    if (Array.isArray(tablesData)) {
+      const results: QueryResult[] = [];
+      for (const table of tablesData) {
+        if (table && typeof table === "object" && "rows" in table && "columns" in table) {
+          results.push(table as QueryResult);
+        }
+      }
+      return results.length > 0 ? results : null;
+    }
   }
+
+  // Single table format
+  if (parsed && typeof parsed === "object" && "rows" in parsed && "columns" in parsed) {
+    return [parsed as QueryResult];
+  }
+
   return null;
 }
 
@@ -537,8 +553,6 @@ export default function AIPage() {
     const messageContent = inputValue.trim();
     setInputValue("");
     setIsSending(true);
-    setIsStreaming(false);
-    setStreamingText("");
     setError(null);
 
     // If no conversation selected, create one first
@@ -1081,8 +1095,49 @@ export default function AIPage() {
                       {stripCodeBlocks(message.content)}
                     </p>
                     {(() => {
-                      const parsedResult = parseQueryResult(message.queryResult);
-                      if (!parsedResult || parsedResult.rows.length === 0) return null;
+                      const parsedResults = parseQueryResult(message.queryResult);
+                      if (!parsedResults || parsedResults.length === 0) return null;
+
+                      // Multiple tables - show compact clickable list
+                      if (parsedResults.length > 1) {
+                        return (
+                          <div className="bg-[#fafafc] dark:bg-gray-800 rounded-xl p-3 mt-2">
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">{parsedResults.length} tables</div>
+                            <div className="flex flex-wrap gap-2">
+                              {parsedResults.map((result, idx) => {
+                                // Try to derive table name from first column or use generic name
+                                const tableName = result.columns[0]?.replace(/_id$/i, '').replace(/_/g, ' ') || `Table ${idx + 1}`;
+                                const capitalizedName = tableName.charAt(0).toUpperCase() + tableName.slice(1);
+
+                                return (
+                                  <button
+                                    key={idx}
+                                    onClick={() => {
+                                      setDataViewerData({
+                                        columns: result.columns,
+                                        rows: result.rows,
+                                        chartType: "table",
+                                      });
+                                      setDataViewerOpen(message.id);
+                                    }}
+                                    className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 hover:shadow-sm transition-all"
+                                  >
+                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{capitalizedName}</span>
+                                    <span className="text-xs text-gray-400 dark:text-gray-500">{result.rows.length} rows</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // Single table - render normally
+                      const parsedResult = parsedResults[0];
+                      if (!parsedResult.rows || parsedResult.rows.length === 0) return null;
 
                       // For single row results, show as a clean card instead of a table
                       if (parsedResult.rows.length === 1) {
@@ -1138,70 +1193,78 @@ export default function AIPage() {
                       const currentView = chartViews[message.id] || "table";
 
                       // Check if data is chartable (has at least one numeric column)
-                      const hasNumericData = parsedResult.columns.slice(1).some((col) =>
+                      // Check ALL columns, not just after first - and handle string numbers
+                      const hasNumericData = parsedResult.columns.some((col) =>
                         parsedResult.rows.some((row) => {
                           const val = row[col];
-                          return typeof val === "number" || !isNaN(Number(val));
+                          if (val === null || val === undefined || val === '') return false;
+                          if (typeof val === "number") return true;
+                          // Check if string can be parsed as number
+                          const numVal = Number(val);
+                          return !isNaN(numVal) && isFinite(numVal);
                         })
                       );
 
                       return (
-                        <div className="bg-[#fafafc] dark:bg-gray-800 rounded-xl overflow-hidden">
-                          {/* View Toggle Buttons */}
-                          {hasNumericData && parsedResult.rows.length > 1 && (
-                            <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
-                              <div className="flex items-center gap-1">
-                                <button
-                                  onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "table" }))}
-                                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                                    currentView === "table"
-                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
-                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
-                                  }`}
-                                >
-                                  Table
-                                </button>
-                                <button
-                                  onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "bar" }))}
-                                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                                    currentView === "bar"
-                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
-                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
-                                  }`}
-                                >
-                                  Bar
-                                </button>
-                                <button
-                                  onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "line" }))}
-                                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                                    currentView === "line"
-                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
-                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
-                                  }`}
-                                >
-                                  Line
-                                </button>
-                                <button
-                                  onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "pie" }))}
-                                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                                    currentView === "pie"
-                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
-                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
-                                  }`}
-                                >
-                                  Pie
-                                </button>
-                                <button
-                                  onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "area" }))}
-                                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-                                    currentView === "area"
-                                      ? "bg-black dark:bg-white text-white dark:text-gray-900"
-                                      : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
-                                  }`}
-                                >
-                                  Area
-                                </button>
-                              </div>
+                        <div className="bg-[#fafafc] dark:bg-gray-800 rounded-xl overflow-hidden mt-2">
+                          {/* View Toggle Buttons - always show for tables */}
+                          <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "table" }))}
+                                className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                  currentView === "table"
+                                    ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                    : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                }`}
+                              >
+                                Table
+                              </button>
+                              {hasNumericData && parsedResult.rows.length > 1 && (
+                                <>
+                                  <button
+                                    onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "bar" }))}
+                                    className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                      currentView === "bar"
+                                        ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                        : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                    }`}
+                                  >
+                                    Bar
+                                  </button>
+                                  <button
+                                    onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "line" }))}
+                                    className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                      currentView === "line"
+                                        ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                        : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                    }`}
+                                  >
+                                    Line
+                                  </button>
+                                  <button
+                                    onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "pie" }))}
+                                    className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                      currentView === "pie"
+                                        ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                        : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                    }`}
+                                  >
+                                    Pie
+                                  </button>
+                                  <button
+                                    onClick={() => setChartViews(prev => ({ ...prev, [message.id]: "area" }))}
+                                    className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                      currentView === "area"
+                                        ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                        : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                    }`}
+                                  >
+                                    Area
+                                  </button>
+                                </>
+                              )}
+                            </div>
                               {/* Expand Button */}
                               <button
                                 onClick={() => {
@@ -1220,8 +1283,7 @@ export default function AIPage() {
                                 </svg>
                                 Expand
                               </button>
-                            </div>
-                          )}
+                          </div>
 
                           {/* Chart View */}
                           {currentView !== "table" && (
@@ -1238,29 +1300,6 @@ export default function AIPage() {
                               columns={parsedResult.columns}
                               rows={parsedResult.rows}
                             />
-                          )}
-
-                          {/* Expand button for table-only view (no numeric data or single row) */}
-                          {(!hasNumericData || parsedResult.rows.length === 1) && parsedResult.rows.length > 0 && (
-                            <div className="flex justify-end p-2 border-t border-gray-200 dark:border-gray-700">
-                              <button
-                                onClick={() => {
-                                  setDataViewerData({
-                                    columns: parsedResult.columns,
-                                    rows: parsedResult.rows,
-                                    chartType: "table",
-                                  });
-                                  setDataViewerOpen(message.id);
-                                }}
-                                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-                                title="Open in fullscreen"
-                              >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-                                </svg>
-                                Expand
-                              </button>
-                            </div>
                           )}
                         </div>
                       );
