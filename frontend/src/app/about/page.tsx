@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { PageLayout } from "@/components/shared";
+import { PageLayout, EmailButton } from "@/components/shared";
 
 const values = [
   {
@@ -89,17 +89,14 @@ export default function AboutPage() {
           Questions? Feedback? We'd love to hear from you.
         </p>
         <div className="flex items-center justify-center gap-4">
-          <a
-            href="mailto:hello@erao.io"
-            className="border border-gray-300 px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors"
-          >
+          <EmailButton variant="outline">
             Email Us
-          </a>
+          </EmailButton>
           <Link
             href="/contact"
             className="bg-black text-white px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors"
           >
-            Contact Form
+            Contact Page
           </Link>
         </div>
       </section>

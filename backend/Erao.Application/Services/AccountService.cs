@@ -8,7 +8,6 @@ public interface IAccountService
 {
     Task<UserDto?> GetAccountAsync(Guid userId);
     Task<UserDto> UpdateAccountAsync(Guid userId, string? firstName, string? lastName);
-    Task DeleteAccountAsync(Guid userId);
 }
 
 public class AccountService : IAccountService
@@ -40,42 +39,16 @@ public class AccountService : IAccountService
             throw new InvalidOperationException("User not found");
         }
 
-        if (!string.IsNullOrEmpty(firstName))
+        // Update fields - use null check to allow clearing values with empty string
+        if (firstName != null)
             user.FirstName = firstName;
-        if (!string.IsNullOrEmpty(lastName))
+        if (lastName != null)
             user.LastName = lastName;
 
+        // Mark entity as modified and save
         await _unitOfWork.Users.UpdateAsync(user);
         await _unitOfWork.SaveChangesAsync();
 
         return _mapper.Map<UserDto>(user);
-    }
-
-    public async Task DeleteAccountAsync(Guid userId)
-    {
-        var user = await _unitOfWork.Users.GetByIdAsync(userId);
-        if (user == null)
-        {
-            throw new InvalidOperationException("User not found");
-        }
-
-        // Delete all user's data
-        // Delete conversations and messages
-        var conversations = await _unitOfWork.Conversations.GetByUserIdAsync(userId);
-        foreach (var conversation in conversations)
-        {
-            await _unitOfWork.Conversations.DeleteAsync(conversation);
-        }
-
-        // Delete database connections
-        var connections = await _unitOfWork.DatabaseConnections.GetByUserIdAsync(userId);
-        foreach (var connection in connections)
-        {
-            await _unitOfWork.DatabaseConnections.DeleteAsync(connection);
-        }
-
-        // Delete the user
-        await _unitOfWork.Users.DeleteAsync(user);
-        await _unitOfWork.SaveChangesAsync();
     }
 }

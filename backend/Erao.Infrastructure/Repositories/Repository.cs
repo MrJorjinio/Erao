@@ -45,7 +45,13 @@ public class Repository<T> : IRepository<T> where T : BaseEntity
 
     public virtual Task<T> UpdateAsync(T entity)
     {
-        _dbSet.Update(entity);
+        // Ensure entity is being tracked and marked as modified
+        var entry = _context.Entry(entity);
+        if (entry.State == EntityState.Detached)
+        {
+            _dbSet.Attach(entity);
+        }
+        entry.State = EntityState.Modified;
         return Task.FromResult(entity);
     }
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { PageLayout } from "@/components/shared";
+import { PageLayout, EmailButton } from "@/components/shared";
 
 const categories = [
   {
@@ -196,12 +196,9 @@ export default function HelpPage() {
         <div className="max-w-3xl mx-auto px-6 text-center">
           <h2 className="text-2xl font-bold mb-4">Still need help?</h2>
           <p className="text-gray-600 mb-6">Our support team is ready to assist you.</p>
-          <Link
-            href="/contact"
-            className="inline-block bg-black text-white px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors"
-          >
+          <EmailButton variant="primary">
             Contact Support
-          </Link>
+          </EmailButton>
         </div>
       </section>
     </PageLayout>

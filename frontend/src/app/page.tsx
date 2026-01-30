@@ -1,51 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-
-// Logo icon component - square, circle, triangle in one horizontal line
-const LogoIcon = ({ className = "w-6 h-6" }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 48 16" fill="currentColor">
-    {/* Square - left */}
-    <rect x="0" y="1" width="14" height="14" />
-    {/* Circle - center */}
-    <circle cx="24" cy="8" r="7" />
-    {/* Triangle - right */}
-    <polygon points="34,15 48,15 41,1" />
-  </svg>
-);
+import { Navbar, Footer, LogoIcon } from "@/components/shared";
 
 export default function LandingPage() {
-  const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly");
 
   return (
     <div className="min-h-screen bg-white text-gray-900">
-      {/* Navigation */}
-      <nav className="w-full max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <LogoIcon className="w-7 h-7" />
-          <span className="font-semibold text-lg">Erao</span>
-        </div>
-        <div className="hidden md:flex items-center gap-6 text-sm">
-          <Link href="/features" className="text-gray-600 hover:text-black transition-colors">Features</Link>
-          <Link href="/pricing" className="text-gray-600 hover:text-black transition-colors">Pricing</Link>
-          <Link href="/about" className="text-gray-600 hover:text-black transition-colors">About</Link>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/login"
-            className="text-sm text-gray-600 hover:text-black transition-colors px-3 py-2"
-          >
-            Log in
-          </Link>
-          <Link
-            href="/register"
-            className="bg-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
-          >
-            Start Free
-          </Link>
-        </div>
-      </nav>
+      {/* Navigation with dropdowns */}
+      <Navbar />
 
       {/* Hero Section - Clear value prop in 5 seconds */}
       <section className="w-full max-w-5xl mx-auto px-6 pt-16 pb-20 md:pt-24 md:pb-28">
@@ -100,7 +63,7 @@ export default function LandingPage() {
               <svg className="w-4 h-4 text-black" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
               </svg>
-              SOC 2 compliant
+              Secure & encrypted
             </span>
           </div>
         </div>
@@ -116,7 +79,10 @@ export default function LandingPage() {
                   <div className="w-3 h-3 rounded-full bg-gray-300" />
                   <div className="w-3 h-3 rounded-full bg-gray-500" />
                 </div>
-                <span className="text-sm text-gray-500">Erao — Connected to production_db</span>
+                <div className="flex items-center gap-2">
+                  <LogoIcon className="w-5 h-5" />
+                  <span className="text-sm text-gray-500">Connected to production_db</span>
+                </div>
               </div>
               <div className="p-6 space-y-4">
                 {/* User message */}
@@ -189,7 +155,7 @@ export default function LandingPage() {
             </div>
             <h3 className="text-lg font-semibold mb-2">Enterprise Security</h3>
             <p className="text-gray-600 text-sm">
-              Your data never leaves your database. All credentials encrypted. SOC 2 Type II compliant.
+              Your data never leaves your database. All credentials encrypted with AES-256. SSL/TLS connections.
             </p>
           </div>
         </div>
@@ -235,27 +201,7 @@ export default function LandingPage() {
       <section className="w-full max-w-5xl mx-auto px-6 py-20">
         <div className="text-center mb-12">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">Simple, transparent pricing</h2>
-          <p className="text-gray-600 mb-6">Start free, upgrade when you need more.</p>
-
-          {/* Billing toggle */}
-          <div className="inline-flex items-center bg-gray-100 rounded-lg p-1">
-            <button
-              onClick={() => setBillingCycle("monthly")}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                billingCycle === "monthly" ? "bg-white shadow-sm" : "text-gray-600"
-              }`}
-            >
-              Monthly
-            </button>
-            <button
-              onClick={() => setBillingCycle("yearly")}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                billingCycle === "yearly" ? "bg-white shadow-sm" : "text-gray-600"
-              }`}
-            >
-              Yearly <span className="text-gray-500 text-xs">Save 20%</span>
-            </button>
-          </div>
+          <p className="text-gray-600">Start free, upgrade when you need more.</p>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
@@ -278,13 +224,13 @@ export default function LandingPage() {
                 <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                50 queries/month
+                3 queries/month
               </li>
               <li className="flex items-center gap-2 text-sm">
                 <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                Basic charts
+                Table & chart views
               </li>
             </ul>
             <Link
@@ -301,9 +247,9 @@ export default function LandingPage() {
               Most Popular
             </div>
             <h3 className="text-lg font-semibold mb-1">Pro</h3>
-            <p className="text-sm text-gray-500 mb-4">For growing teams</p>
+            <p className="text-sm text-gray-500 mb-4">For power users</p>
             <div className="mb-6">
-              <span className="text-4xl font-bold">${billingCycle === "monthly" ? "49" : "39"}</span>
+              <span className="text-4xl font-bold">$49</span>
               <span className="text-gray-500">/month</span>
             </div>
             <ul className="space-y-3 mb-6">
@@ -317,26 +263,20 @@ export default function LandingPage() {
                 <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                Unlimited queries
+                50 queries/month
               </li>
               <li className="flex items-center gap-2 text-sm">
                 <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                Advanced charts & exports
-              </li>
-              <li className="flex items-center gap-2 text-sm">
-                <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-                Priority support
+                Export to CSV/Excel/PDF
               </li>
             </ul>
             <Link
               href="/register"
               className="block w-full py-3 text-center bg-black text-white rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors"
             >
-              Start 14-Day Free Trial
+              Get Started
             </Link>
           </div>
 
@@ -345,7 +285,8 @@ export default function LandingPage() {
             <h3 className="text-lg font-semibold mb-1">Enterprise</h3>
             <p className="text-sm text-gray-500 mb-4">For large organizations</p>
             <div className="mb-6">
-              <span className="text-4xl font-bold">Custom</span>
+              <span className="text-4xl font-bold">$299</span>
+              <span className="text-gray-500">/month</span>
             </div>
             <ul className="space-y-3 mb-6">
               <li className="flex items-center gap-2 text-sm">
@@ -358,26 +299,20 @@ export default function LandingPage() {
                 <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                SSO & SAML
+                100 queries/month
               </li>
               <li className="flex items-center gap-2 text-sm">
                 <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                Dedicated support
-              </li>
-              <li className="flex items-center gap-2 text-sm">
-                <svg className="w-5 h-5 text-black flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-                Custom integrations
+                Export to CSV/Excel/PDF
               </li>
             </ul>
             <Link
-              href="mailto:sales@erao.io"
+              href="/register"
               className="block w-full py-3 text-center border border-gray-300 rounded-xl text-sm font-medium hover:bg-gray-50 transition-colors"
             >
-              Contact Sales
+              Get Started
             </Link>
           </div>
         </div>
@@ -401,48 +336,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="w-full max-w-5xl mx-auto px-6 py-16 border-t border-gray-200">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-          <div>
-            <h4 className="font-semibold text-sm mb-4">Product</h4>
-            <ul className="space-y-3 text-sm text-gray-500">
-              <li><Link href="/features" className="hover:text-black transition-colors">Features</Link></li>
-              <li><Link href="/pricing" className="hover:text-black transition-colors">Pricing</Link></li>
-              <li><Link href="/changelog" className="hover:text-black transition-colors">Changelog</Link></li>
-              <li><Link href="/status" className="hover:text-black transition-colors">Status</Link></li>
-            </ul>
-          </div>
-          <div>
-            <h4 className="font-semibold text-sm mb-4">Resources</h4>
-            <ul className="space-y-3 text-sm text-gray-500">
-              <li><Link href="/help" className="hover:text-black transition-colors">Help Center</Link></li>
-              <li><Link href="/security" className="hover:text-black transition-colors">Security</Link></li>
-            </ul>
-          </div>
-          <div>
-            <h4 className="font-semibold text-sm mb-4">Company</h4>
-            <ul className="space-y-3 text-sm text-gray-500">
-              <li><Link href="/about" className="hover:text-black transition-colors">About</Link></li>
-              <li><Link href="/contact" className="hover:text-black transition-colors">Contact</Link></li>
-            </ul>
-          </div>
-          <div>
-            <h4 className="font-semibold text-sm mb-4">Legal</h4>
-            <ul className="space-y-3 text-sm text-gray-500">
-              <li><Link href="/privacy" className="hover:text-black transition-colors">Privacy Policy</Link></li>
-              <li><Link href="/terms" className="hover:text-black transition-colors">Terms of Service</Link></li>
-            </ul>
-          </div>
-        </div>
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6 pt-8 border-t border-gray-200">
-          <div className="flex items-center gap-2">
-            <LogoIcon className="w-6 h-6" />
-            <span className="font-semibold">Erao</span>
-          </div>
-          <p className="text-sm text-gray-400">© 2025 Erao. All rights reserved.</p>
-        </div>
-      </footer>
+      {/* Footer with all links */}
+      <Footer />
     </div>
   );
 }

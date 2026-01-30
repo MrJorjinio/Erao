@@ -61,26 +61,6 @@ public class AccountController : ControllerBase
         }
     }
 
-    [HttpDelete]
-    public async Task<ActionResult<ApiResponse>> DeleteAccount()
-    {
-        try
-        {
-            var userId = GetUserId();
-            await _accountService.DeleteAccountAsync(userId);
-            return Ok(ApiResponse.SuccessResponse("Account deleted successfully"));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return NotFound(ApiResponse.ErrorResponse(ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error deleting account");
-            return StatusCode(500, ApiResponse.ErrorResponse("An error occurred"));
-        }
-    }
-
     private Guid GetUserId()
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;

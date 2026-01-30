@@ -1,6 +1,6 @@
 "use client";
 
-import { PageLayout } from "@/components/shared";
+import { PageLayout, EmailButton } from "@/components/shared";
 
 const securityFeatures = [
   {
@@ -23,28 +23,10 @@ const securityFeatures = [
   },
   {
     title: "No Data Storage",
-    description: "We never store your actual database data. We only store the queries you run and their metadata—not the results.",
+    description: "We never store your actual database data. We only store the queries you run and their metadata, not the results.",
     icon: (
       <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-      </svg>
-    ),
-  },
-  {
-    title: "SOC 2 Type II",
-    description: "We maintain SOC 2 Type II compliance, demonstrating our commitment to security, availability, and confidentiality.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
-      </svg>
-    ),
-  },
-  {
-    title: "Regular Audits",
-    description: "We conduct regular security audits and penetration testing to identify and address potential vulnerabilities.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
       </svg>
     ),
   },
@@ -100,7 +82,7 @@ export default function SecurityPage() {
               { step: 1, title: "You ask a question", desc: "Your natural language question is sent to our servers over an encrypted connection." },
               { step: 2, title: "We generate a query", desc: "Our AI translates your question into a SQL query. Only metadata about your database schema is used." },
               { step: 3, title: "Query executes on your database", desc: "The query runs directly on your database using your encrypted credentials. We connect via SSL/TLS." },
-              { step: 4, title: "Results displayed to you", desc: "The results are sent back to your browser. We do not store the actual data—only the query text." },
+              { step: 4, title: "Results displayed to you", desc: "The results are sent back to your browser. We do not store the actual data, only the query text." },
             ].map((item) => (
               <div key={item.step} className="flex gap-4">
                 <div className="w-8 h-8 bg-black text-white rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold">
@@ -116,38 +98,17 @@ export default function SecurityPage() {
         </div>
       </section>
 
-      {/* Compliance */}
-      <section className="w-full max-w-5xl mx-auto px-6 py-16">
-        <h2 className="text-2xl font-bold text-center mb-12">Compliance & Certifications</h2>
-        <div className="grid md:grid-cols-3 gap-6 max-w-3xl mx-auto">
-          <div className="border border-gray-200 rounded-2xl p-6 text-center">
-            <div className="text-2xl font-bold mb-2">SOC 2</div>
-            <p className="text-sm text-gray-600">Type II Compliant</p>
-          </div>
-          <div className="border border-gray-200 rounded-2xl p-6 text-center">
-            <div className="text-2xl font-bold mb-2">GDPR</div>
-            <p className="text-sm text-gray-600">Compliant</p>
-          </div>
-          <div className="border border-gray-200 rounded-2xl p-6 text-center">
-            <div className="text-2xl font-bold mb-2">CCPA</div>
-            <p className="text-sm text-gray-600">Compliant</p>
-          </div>
-        </div>
-      </section>
 
       {/* Contact */}
-      <section className="w-full bg-gray-50 py-16">
+      <section className="w-full bg-black text-white py-16">
         <div className="max-w-3xl mx-auto px-6 text-center">
           <h2 className="text-2xl font-bold mb-4">Security Questions?</h2>
-          <p className="text-gray-600 mb-6">
-            If you have security concerns or want to report a vulnerability, please contact our security team.
+          <p className="text-gray-400 mb-6">
+            If you have security concerns or want to report a vulnerability, please contact our team.
           </p>
-          <a
-            href="mailto:security@erao.io"
-            className="inline-block bg-black text-white px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors"
-          >
+          <EmailButton variant="secondary">
             Contact Security Team
-          </a>
+          </EmailButton>
         </div>
       </section>
     </PageLayout>

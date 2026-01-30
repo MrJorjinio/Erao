@@ -8,55 +8,43 @@ const plans = [
   {
     name: "Free",
     description: "For individuals getting started",
-    monthlyPrice: 0,
-    yearlyPrice: 0,
+    price: 0,
     features: [
       { name: "1 database connection", included: true },
-      { name: "50 queries/month", included: true },
-      { name: "Basic table & chart views", included: true },
+      { name: "3 queries/month", included: true },
+      { name: "Table & chart views", included: true },
       { name: "7-day conversation history", included: true },
-      { name: "Community support", included: true },
-      { name: "Advanced visualizations", included: false },
       { name: "Export to CSV/Excel", included: false },
-      { name: "Team collaboration", included: false },
     ],
     cta: "Get Started Free",
     popular: false,
   },
   {
     name: "Pro",
-    description: "For growing teams",
-    monthlyPrice: 49,
-    yearlyPrice: 39,
+    description: "For power users",
+    price: 49,
     features: [
       { name: "5 database connections", included: true },
-      { name: "Unlimited queries", included: true },
-      { name: "Advanced visualizations", included: true },
+      { name: "50 queries/month", included: true },
+      { name: "Table & chart views", included: true },
       { name: "Unlimited conversation history", included: true },
-      { name: "Priority email support", included: true },
       { name: "Export to CSV/Excel/PDF", included: true },
-      { name: "Team collaboration (up to 5)", included: true },
-      { name: "Custom integrations", included: false },
     ],
-    cta: "Start 14-Day Free Trial",
+    cta: "Get Started",
     popular: true,
   },
   {
     name: "Enterprise",
     description: "For large organizations",
-    monthlyPrice: null,
-    yearlyPrice: null,
+    price: 299,
     features: [
       { name: "Unlimited database connections", included: true },
-      { name: "Unlimited queries", included: true },
-      { name: "Advanced visualizations", included: true },
+      { name: "100 queries/month", included: true },
+      { name: "Table & chart views", included: true },
       { name: "Unlimited conversation history", included: true },
-      { name: "24/7 dedicated support", included: true },
-      { name: "SSO & SAML authentication", included: true },
-      { name: "Unlimited team members", included: true },
-      { name: "Custom integrations & API", included: true },
+      { name: "Export to CSV/Excel/PDF", included: true },
     ],
-    cta: "Contact Sales",
+    cta: "Get Started",
     popular: false,
   },
 ];
@@ -64,7 +52,11 @@ const plans = [
 const faqs = [
   {
     question: "Can I try Erao for free?",
-    answer: "Yes! Our Free plan lets you connect 1 database and run 50 queries per month at no cost. No credit card required to get started.",
+    answer: "Yes! Our Free plan lets you connect 1 database and run 3 queries per month at no cost. No credit card required to get started.",
+  },
+  {
+    question: "Can I delete my account?",
+    answer: "No, accounts cannot be deleted. This policy prevents abuse of our free tier. If you have concerns about your data, please contact us.",
   },
   {
     question: "What happens when I hit my query limit?",
@@ -80,16 +72,15 @@ const faqs = [
   },
   {
     question: "Is my data secure?",
-    answer: "Yes. We never store your actual data—only the queries you run. All database credentials are encrypted with AES-256, and connections use SSL/TLS. We're SOC 2 Type II compliant.",
+    answer: "Yes. We never store your actual data—only the queries you run. All database credentials are encrypted with AES-256, and connections use SSL/TLS.",
   },
   {
     question: "Do you offer refunds?",
-    answer: "Yes, we offer a 14-day money-back guarantee on all paid plans. If you're not satisfied, contact us for a full refund.",
+    answer: "Yes, we offer refunds within 7 days of purchase, provided you've used fewer than 5 queries. If you've already used 5 or more queries, refunds are not available.",
   },
 ];
 
 export default function PricingPage() {
-  const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly");
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   return (
@@ -97,27 +88,7 @@ export default function PricingPage() {
       {/* Hero */}
       <section className="w-full max-w-5xl mx-auto px-6 pt-16 pb-12 text-center">
         <h1 className="text-4xl md:text-5xl font-bold mb-4">Simple, transparent pricing</h1>
-        <p className="text-lg text-gray-600 mb-8">Start free. Upgrade when you need more.</p>
-
-        {/* Billing toggle */}
-        <div className="inline-flex items-center bg-gray-100 rounded-lg p-1">
-          <button
-            onClick={() => setBillingCycle("monthly")}
-            className={`px-5 py-2.5 rounded-md text-sm font-medium transition-colors ${
-              billingCycle === "monthly" ? "bg-white shadow-sm text-black" : "text-gray-600"
-            }`}
-          >
-            Monthly
-          </button>
-          <button
-            onClick={() => setBillingCycle("yearly")}
-            className={`px-5 py-2.5 rounded-md text-sm font-medium transition-colors ${
-              billingCycle === "yearly" ? "bg-white shadow-sm text-black" : "text-gray-600"
-            }`}
-          >
-            Yearly <span className="text-gray-500 text-xs ml-1">Save 20%</span>
-          </button>
-        </div>
+        <p className="text-lg text-gray-600">Start free. Upgrade when you need more.</p>
       </section>
 
       {/* Pricing Cards */}
@@ -140,25 +111,12 @@ export default function PricingPage() {
               <h3 className="text-xl font-semibold mb-1">{plan.name}</h3>
               <p className="text-sm text-gray-500 mb-4">{plan.description}</p>
               <div className="mb-6">
-                {plan.monthlyPrice !== null ? (
-                  <>
-                    <span className="text-4xl font-bold">
-                      ${billingCycle === "monthly" ? plan.monthlyPrice : plan.yearlyPrice}
-                    </span>
-                    <span className="text-gray-500">/month</span>
-                    {billingCycle === "yearly" && plan.monthlyPrice > 0 && (
-                      <p className="text-sm text-gray-500 mt-1">
-                        Billed ${plan.yearlyPrice * 12}/year
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-4xl font-bold">Custom</span>
-                )}
+                <span className="text-4xl font-bold">${plan.price}</span>
+                <span className="text-gray-500">/month</span>
               </div>
 
               <Link
-                href={plan.name === "Enterprise" ? "mailto:sales@erao.io" : "/register"}
+                href="/register"
                 className={`block w-full py-3 text-center rounded-xl text-sm font-medium transition-colors mb-6 ${
                   plan.popular
                     ? "bg-black text-white hover:bg-gray-800"
@@ -207,13 +165,9 @@ export default function PricingPage() {
             <tbody>
               {[
                 { feature: "Database connections", free: "1", pro: "5", enterprise: "Unlimited" },
-                { feature: "Queries per month", free: "50", pro: "Unlimited", enterprise: "Unlimited" },
+                { feature: "Queries per month", free: "3", pro: "50", enterprise: "100" },
                 { feature: "Conversation history", free: "7 days", pro: "Unlimited", enterprise: "Unlimited" },
-                { feature: "Team members", free: "1", pro: "5", enterprise: "Unlimited" },
-                { feature: "Export formats", free: "—", pro: "CSV, Excel, PDF", enterprise: "All + API" },
-                { feature: "Chart types", free: "Basic", pro: "Advanced", enterprise: "Advanced" },
-                { feature: "SSO / SAML", free: "—", pro: "—", enterprise: "Yes" },
-                { feature: "Support", free: "Community", pro: "Priority email", enterprise: "24/7 dedicated" },
+                { feature: "Export formats", free: "—", pro: "CSV, Excel, PDF", enterprise: "CSV, Excel, PDF" },
               ].map((row) => (
                 <tr key={row.feature} className="border-b border-gray-100">
                   <td className="py-4 pr-4 text-sm text-gray-700">{row.feature}</td>
@@ -263,8 +217,8 @@ export default function PricingPage() {
           <h2 className="text-2xl font-bold mb-4">Still have questions?</h2>
           <p className="text-gray-600 mb-6">Our team is here to help you find the right plan.</p>
           <div className="flex items-center justify-center gap-4">
-            <Link href="/contact" className="border border-gray-300 px-6 py-3 rounded-xl text-sm font-medium hover:bg-white transition-colors">
-              Contact Sales
+            <Link href="/contact" className="border border-gray-300 hover:bg-gray-50 px-6 py-3 rounded-xl text-sm font-medium transition-colors">
+              Contact Us
             </Link>
             <Link href="/register" className="bg-black text-white px-6 py-3 rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors">
               Start Free Trial

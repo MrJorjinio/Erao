@@ -939,7 +939,7 @@ export default function AIPage() {
                   setShowAccountMenu(false);
                   router.push("/profile");
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white cursor-pointer transition-colors flex items-center gap-3"
               >
                 <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -951,7 +951,7 @@ export default function AIPage() {
                   setShowAccountMenu(false);
                   router.push("/usage");
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white cursor-pointer transition-colors flex items-center gap-3"
               >
                 <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -963,7 +963,7 @@ export default function AIPage() {
                   setShowAccountMenu(false);
                   router.push("/subscriptions");
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white cursor-pointer transition-colors flex items-center gap-3"
               >
                 <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
@@ -972,7 +972,7 @@ export default function AIPage() {
               </button>
               <button
                 onClick={() => setDarkMode(!darkMode)}
-                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-all duration-150 flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-black dark:hover:text-white cursor-pointer transition-colors flex items-center gap-3"
               >
                 {darkMode ? (
                   <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -991,7 +991,7 @@ export default function AIPage() {
                   setShowAccountMenu(false);
                   handleLogout();
                 }}
-                className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all duration-150 flex items-center gap-3"
+                className="w-full text-left px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 cursor-pointer transition-colors flex items-center gap-3"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -1098,39 +1098,135 @@ export default function AIPage() {
                       const parsedResults = parseQueryResult(message.queryResult);
                       if (!parsedResults || parsedResults.length === 0) return null;
 
-                      // Multiple tables - show compact clickable list
+                      // Multiple tables - show each with same UI as single table
                       if (parsedResults.length > 1) {
                         return (
-                          <div className="bg-[#fafafc] dark:bg-gray-800 rounded-xl p-3 mt-2">
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">{parsedResults.length} tables</div>
-                            <div className="flex flex-wrap gap-2">
-                              {parsedResults.map((result, idx) => {
-                                // Try to derive table name from first column or use generic name
-                                const tableName = result.columns[0]?.replace(/_id$/i, '').replace(/_/g, ' ') || `Table ${idx + 1}`;
-                                const capitalizedName = tableName.charAt(0).toUpperCase() + tableName.slice(1);
+                          <div className="space-y-4 mt-2">
+                            {parsedResults.map((result, idx) => {
+                              // Use title from result or derive from first column
+                              const tableTitle = (result as QueryResult & { title?: string }).title ||
+                                result.columns[0]?.replace(/_id$/i, '').replace(/_/g, ' ') ||
+                                `Table ${idx + 1}`;
+                              const capitalizedTitle = tableTitle.charAt(0).toUpperCase() + tableTitle.slice(1);
 
-                                return (
-                                  <button
-                                    key={idx}
-                                    onClick={() => {
-                                      setDataViewerData({
-                                        columns: result.columns,
-                                        rows: result.rows,
-                                        chartType: "table",
-                                      });
-                                      setDataViewerOpen(message.id);
-                                    }}
-                                    className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 hover:shadow-sm transition-all"
-                                  >
-                                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                    </svg>
-                                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{capitalizedName}</span>
-                                    <span className="text-xs text-gray-400 dark:text-gray-500">{result.rows.length} rows</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
+                              // Use composite key for chart view state
+                              const viewKey = `${message.id}_${idx}`;
+                              const currentView = chartViews[viewKey] || "table";
+
+                              // Check if data is chartable
+                              const hasNumericData = result.columns.some((col) =>
+                                result.rows.some((row) => {
+                                  const val = row[col];
+                                  if (val === null || val === undefined || val === '') return false;
+                                  if (typeof val === "number") return true;
+                                  const numVal = Number(val);
+                                  return !isNaN(numVal) && isFinite(numVal);
+                                })
+                              );
+
+                              return (
+                                <div key={idx} className="bg-[#fafafc] dark:bg-gray-800 rounded-xl overflow-hidden">
+                                  {/* Title */}
+                                  <div className="px-3 pt-2 pb-1">
+                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">{capitalizedTitle}</span>
+                                  </div>
+                                  {/* View Toggle Buttons */}
+                                  <div className="flex items-center justify-between p-2 border-b border-gray-200 dark:border-gray-700">
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={() => setChartViews(prev => ({ ...prev, [viewKey]: "table" }))}
+                                        className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                          currentView === "table"
+                                            ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                            : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                        }`}
+                                      >
+                                        Table
+                                      </button>
+                                      {hasNumericData && result.rows.length > 1 && (
+                                        <>
+                                          <button
+                                            onClick={() => setChartViews(prev => ({ ...prev, [viewKey]: "bar" }))}
+                                            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                              currentView === "bar"
+                                                ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                                : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                            }`}
+                                          >
+                                            Bar
+                                          </button>
+                                          <button
+                                            onClick={() => setChartViews(prev => ({ ...prev, [viewKey]: "line" }))}
+                                            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                              currentView === "line"
+                                                ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                                : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                            }`}
+                                          >
+                                            Line
+                                          </button>
+                                          <button
+                                            onClick={() => setChartViews(prev => ({ ...prev, [viewKey]: "pie" }))}
+                                            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                              currentView === "pie"
+                                                ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                                : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                            }`}
+                                          >
+                                            Pie
+                                          </button>
+                                          <button
+                                            onClick={() => setChartViews(prev => ({ ...prev, [viewKey]: "area" }))}
+                                            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                                              currentView === "area"
+                                                ? "bg-black dark:bg-white text-white dark:text-gray-900"
+                                                : "bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600"
+                                            }`}
+                                          >
+                                            Area
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                    {/* Expand Button */}
+                                    <button
+                                      onClick={() => {
+                                        setDataViewerData({
+                                          columns: result.columns,
+                                          rows: result.rows,
+                                          chartType: currentView,
+                                        });
+                                        setDataViewerOpen(message.id);
+                                      }}
+                                      className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                                      title="Open in fullscreen"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                                      </svg>
+                                      Expand
+                                    </button>
+                                  </div>
+
+                                  {/* Chart View */}
+                                  {currentView !== "table" && (
+                                    <DataChart
+                                      data={result.rows}
+                                      columns={result.columns}
+                                      chartType={currentView}
+                                    />
+                                  )}
+
+                                  {/* Table View */}
+                                  {currentView === "table" && (
+                                    <VirtualTable
+                                      columns={result.columns}
+                                      rows={result.rows}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       }

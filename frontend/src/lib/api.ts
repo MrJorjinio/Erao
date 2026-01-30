@@ -553,12 +553,6 @@ class ApiClient {
     });
   }
 
-  async deleteAccount(): Promise<ApiResponse<null>> {
-    return this.request<null>('/api/account', {
-      method: 'DELETE',
-    });
-  }
-
   // ========== Subscription endpoints ==========
   async getSubscriptionPlans(): Promise<ApiResponse<SubscriptionPlan[]>> {
     return this.request<SubscriptionPlan[]>('/api/subscriptions/plans');

@@ -171,8 +171,6 @@ export default function SubscriptionsPage() {
                 ? "Upgrading..."
                 : plan.isCurrent
                 ? "Current Plan"
-                : plan.tier === 2
-                ? "Contact Sales"
                 : "Upgrade"}
             </button>
           </div>

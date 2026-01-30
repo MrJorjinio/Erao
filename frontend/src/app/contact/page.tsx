@@ -1,133 +1,146 @@
 "use client";
 
 import { useState } from "react";
-import { PageLayout } from "@/components/shared";
+import { PageLayout, SUPPORT_EMAIL } from "@/components/shared";
 
 export default function ContactPage() {
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    subject: "general",
-    message: "",
-  });
-  const [submitted, setSubmitted] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitted(true);
+  const handleCopy = async (type: string) => {
+    try {
+      await navigator.clipboard.writeText(SUPPORT_EMAIL);
+      setCopied(type);
+      setTimeout(() => setCopied(null), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
   };
 
   return (
     <PageLayout currentPage="contact">
       <div className="w-full max-w-5xl mx-auto px-6 py-16">
-        <div className="grid md:grid-cols-2 gap-16">
-          {/* Left - Info */}
-          <div>
-            <h1 className="text-4xl font-bold mb-4">Get in touch</h1>
-            <p className="text-gray-600 mb-8">
-              Have questions about Erao? We're here to help. Fill out the form or reach us directly.
+        <div className="text-center mb-12">
+          <h1 className="text-4xl font-bold mb-4">Get in Touch</h1>
+          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            Have questions about Erao? We're here to help. Click any card below to copy our email address.
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+          {/* General */}
+          <button
+            onClick={() => handleCopy("general")}
+            className="group border border-gray-200 rounded-2xl p-8 hover:border-black hover:shadow-lg transition-all text-center text-left"
+          >
+            <div className={`w-14 h-14 rounded-xl flex items-center justify-center mx-auto mb-5 transition-colors ${
+              copied === "general" ? "bg-green-500 text-white" : "bg-gray-100 group-hover:bg-black group-hover:text-white"
+            }`}>
+              {copied === "general" ? (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              )}
+            </div>
+            <h3 className="text-lg font-semibold mb-2">General Inquiries</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Questions about Erao? Want to learn more about what we offer?
             </p>
+            <span className={`inline-flex items-center gap-2 text-sm font-medium ${
+              copied === "general" ? "text-green-600" : "text-black"
+            }`}>
+              {copied === "general" ? "Email Copied!" : "Click to Copy Email"}
+            </span>
+          </button>
 
-            <div className="space-y-6">
-              <div className="border border-gray-200 rounded-xl p-5">
-                <h3 className="font-semibold mb-1">General Inquiries</h3>
-                <a href="mailto:hello@erao.io" className="text-gray-600 hover:text-black transition-colors">
-                  hello@erao.io
-                </a>
-              </div>
+          {/* Support */}
+          <button
+            onClick={() => handleCopy("support")}
+            className="group border border-gray-200 rounded-2xl p-8 hover:border-black hover:shadow-lg transition-all text-center text-left"
+          >
+            <div className={`w-14 h-14 rounded-xl flex items-center justify-center mx-auto mb-5 transition-colors ${
+              copied === "support" ? "bg-green-500 text-white" : "bg-gray-100 group-hover:bg-black group-hover:text-white"
+            }`}>
+              {copied === "support" ? (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              )}
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Technical Support</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Having issues? Need help setting up your database connections?
+            </p>
+            <span className={`inline-flex items-center gap-2 text-sm font-medium ${
+              copied === "support" ? "text-green-600" : "text-black"
+            }`}>
+              {copied === "support" ? "Email Copied!" : "Click to Copy Email"}
+            </span>
+          </button>
 
-              <div className="border border-gray-200 rounded-xl p-5">
-                <h3 className="font-semibold mb-1">Sales</h3>
-                <a href="mailto:sales@erao.io" className="text-gray-600 hover:text-black transition-colors">
-                  sales@erao.io
-                </a>
-              </div>
+          {/* Sales */}
+          <button
+            onClick={() => handleCopy("sales")}
+            className="group border border-gray-200 rounded-2xl p-8 hover:border-black hover:shadow-lg transition-all text-center text-left"
+          >
+            <div className={`w-14 h-14 rounded-xl flex items-center justify-center mx-auto mb-5 transition-colors ${
+              copied === "sales" ? "bg-green-500 text-white" : "bg-gray-100 group-hover:bg-black group-hover:text-white"
+            }`}>
+              {copied === "sales" ? (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              )}
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Sales</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Interested in Enterprise plans or custom solutions for your team?
+            </p>
+            <span className={`inline-flex items-center gap-2 text-sm font-medium ${
+              copied === "sales" ? "text-green-600" : "text-black"
+            }`}>
+              {copied === "sales" ? "Email Copied!" : "Click to Copy Email"}
+            </span>
+          </button>
+        </div>
 
-              <div className="border border-gray-200 rounded-xl p-5">
-                <h3 className="font-semibold mb-1">Technical Support</h3>
-                <a href="mailto:support@erao.io" className="text-gray-600 hover:text-black transition-colors">
-                  support@erao.io
-                </a>
-              </div>
+        {/* Direct Email Display */}
+        <div className="mt-16 max-w-2xl mx-auto text-center">
+          <div className="bg-gray-50 rounded-2xl p-8">
+            <h2 className="text-xl font-semibold mb-3">Our Email Address</h2>
+            <p className="text-gray-600 mb-4">
+              Reach us directly at:
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <span className="text-lg font-medium text-black bg-white px-4 py-2 rounded-lg border border-gray-200">
+                {SUPPORT_EMAIL}
+              </span>
+              <button
+                onClick={() => handleCopy("direct")}
+                className="w-20 px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-black text-white hover:bg-gray-800"
+              >
+                {copied === "direct" ? "Copied!" : "Copy"}
+              </button>
             </div>
           </div>
+        </div>
 
-          {/* Right - Form */}
-          <div>
-            {submitted ? (
-              <div className="border border-gray-200 rounded-2xl p-8 text-center">
-                <div className="w-12 h-12 bg-black text-white rounded-full flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                </div>
-                <h2 className="text-xl font-semibold mb-2">Message sent!</h2>
-                <p className="text-gray-600 text-sm">
-                  We'll get back to you within 24 hours.
-                </p>
-              </div>
-            ) : (
-              <form onSubmit={handleSubmit} className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
-                    placeholder="Your name"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">Email</label>
-                  <input
-                    type="email"
-                    required
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
-                    placeholder="you@example.com"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">Subject</label>
-                  <select
-                    value={formData.subject}
-                    onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent bg-white"
-                  >
-                    <option value="general">General Inquiry</option>
-                    <option value="sales">Sales</option>
-                    <option value="support">Technical Support</option>
-                    <option value="billing">Billing</option>
-                    <option value="partnership">Partnership</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">Message</label>
-                  <textarea
-                    required
-                    rows={5}
-                    value={formData.message}
-                    onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent resize-none"
-                    placeholder="How can we help?"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors"
-                >
-                  Send Message
-                </button>
-              </form>
-            )}
-          </div>
+        {/* Response Time */}
+        <div className="mt-12 text-center">
+          <p className="text-sm text-gray-500">
+            We typically respond within 24 hours during business days.
+          </p>
         </div>
       </div>
     </PageLayout>
